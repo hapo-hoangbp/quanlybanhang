@@ -5,6 +5,7 @@ import '../models/product.dart';
 import '../models/sale_item.dart';
 import '../models/invoice.dart';
 import '../services/storage_service.dart';
+import '../services/print_service.dart';
 import '../utils/price_validator.dart';
 
 class SalesScreen extends StatefulWidget {
@@ -173,7 +174,7 @@ class _SalesScreenState extends State<SalesScreen> {
       final idx = _cart.indexOf(existing);
       _cart[idx] = existing.copyWith(quantity: newQty);
     } else {
-      _cart.add(SaleItem(
+      _cart.insert(0, SaleItem(
         productId: product.id,
         productName: product.name,
         productCode: product.code,
@@ -635,7 +636,21 @@ class _SalesScreenState extends State<SalesScreen> {
                       child: Column(
                         children: [
                           OutlinedButton.icon(
-                            onPressed: () {},
+                            onPressed: _hasPayableItems
+                                ? () async {
+                                    final payable = _cart.where((i) => i.quantity > 0).toList();
+                                    final subtotal = payable.fold(0.0, (s, i) => s + i.total);
+                                    final discount = _tabs[_activeTabIndex].discountAmount;
+                                    final total = (subtotal - discount).clamp(0.0, double.infinity).toDouble();
+                                    await PrintService.printInvoice(
+                                      context: context,
+                                      items: payable,
+                                      subtotal: subtotal,
+                                      discountAmount: discount,
+                                      total: total,
+                                    );
+                                  }
+                                : null,
                             icon: const Icon(Icons.print),
                             label: const Text('IN'),
                             style: OutlinedButton.styleFrom(
