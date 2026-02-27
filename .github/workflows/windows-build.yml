@@ -2,7 +2,8 @@ name: Build Windows App
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -12,10 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-        flutter-version: '3.41.2'
+          flutter-version: 3.41.2
+          channel: stable
 
       - name: Enable Windows Desktop
         run: flutter config --enable-windows-desktop
