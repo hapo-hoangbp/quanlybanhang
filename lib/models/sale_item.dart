@@ -2,6 +2,7 @@ class SaleItem {
   final String productId;
   final String productName;
   final String productCode;
+  final String unit;
   double price;
   int quantity;
   double get total => price * quantity;
@@ -10,6 +11,7 @@ class SaleItem {
     required this.productId,
     required this.productName,
     required this.productCode,
+    this.unit = 'cái',
     required this.price,
     required this.quantity,
   });
@@ -19,6 +21,7 @@ class SaleItem {
       'productId': productId,
       'productName': productName,
       'productCode': productCode,
+      'unit': unit,
       'price': price,
       'quantity': quantity,
     };
@@ -29,6 +32,7 @@ class SaleItem {
       productId: map['productId'] as String,
       productName: map['productName'] as String,
       productCode: map['productCode'] as String,
+      unit: map['unit'] as String? ?? 'cái',
       price: (map['price'] as num).toDouble(),
       quantity: map['quantity'] as int,
     );
@@ -39,6 +43,7 @@ class SaleItem {
       productId: productId,
       productName: productName,
       productCode: productCode,
+      unit: unit,
       price: price ?? this.price,
       quantity: quantity ?? this.quantity,
     );

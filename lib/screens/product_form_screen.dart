@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import '../models/product.dart';
 import '../services/storage_service.dart';
+import '../utils/price_validator.dart';
+import '../utils/vnd_input_formatter.dart';
 
 class ProductFormScreen extends StatefulWidget {
   final Product? product;
@@ -17,8 +20,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   late TextEditingController _nameController;
   late TextEditingController _codeController;
   late TextEditingController _priceController;
+  late TextEditingController _costPriceController;
   late TextEditingController _stockController;
   late TextEditingController _unitController;
+  late TextEditingController _imagePathController;
   bool _isEditing = false;
 
   @override
@@ -28,12 +33,20 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _nameController = TextEditingController(text: widget.product?.name ?? '');
     _codeController = TextEditingController(text: widget.product?.code ?? '');
     _priceController = TextEditingController(
-      text: widget.product?.price.toString() ?? '',
+      text: _formatPriceForDisplay(widget.product?.price),
+    );
+    _costPriceController = TextEditingController(
+      text: _formatPriceForDisplay(widget.product?.costPrice),
     );
     _stockController = TextEditingController(
       text: widget.product?.stock.toString() ?? '0',
     );
     _unitController = TextEditingController(text: widget.product?.unit ?? 'cái');
+    _imagePathController = TextEditingController(text: widget.product?.imagePath ?? '');
+  }
+
+  String _formatPriceForDisplay(double? value) {
+    return formatVndPrice(value);
   }
 
   @override
@@ -41,8 +54,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _nameController.dispose();
     _codeController.dispose();
     _priceController.dispose();
+    _costPriceController.dispose();
     _stockController.dispose();
     _unitController.dispose();
+    _imagePathController.dispose();
     super.dispose();
   }
 
@@ -53,9 +68,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       id: widget.product?.id ?? const Uuid().v4(),
       name: _nameController.text.trim(),
       code: _codeController.text.trim(),
-      price: double.tryParse(_priceController.text) ?? 0,
+      price: parseVndPrice(_priceController.text) ?? 0,
+      costPrice: parseVndPrice(_costPriceController.text) ?? 0,
       stock: int.tryParse(_stockController.text) ?? 0,
       unit: _unitController.text.trim().isEmpty ? 'cái' : _unitController.text.trim(),
+      imagePath: _imagePathController.text.trim().isEmpty ? null : _imagePathController.text.trim(),
     );
 
     if (_isEditing) {
@@ -105,15 +122,28 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               controller: _priceController,
               decoration: const InputDecoration(
                 labelText: 'Giá bán (VNĐ)',
+                hintText: 'VD: 150.000',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.attach_money),
+                prefixIcon: Icon(Icons.sell),
               ),
               keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly, VndPriceInputFormatter()],
+              validator: (v) => validateVndPrice(v, fieldName: 'Giá bán'),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _costPriceController,
+              decoration: const InputDecoration(
+                labelText: 'Giá nhập (VNĐ) - tùy chọn',
+                hintText: 'VD: 12.222.222',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.shopping_cart),
+              ),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly, VndPriceInputFormatter()],
               validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Nhập giá bán';
-                if (double.tryParse(v) == null) return 'Giá không hợp lệ';
-                if ((double.tryParse(v) ?? 0) < 0) return 'Giá phải >= 0';
-                return null;
+                if (v == null || v.trim().isEmpty) return null;
+                return validateVndPrice(v, fieldName: 'Giá nhập');
               },
             ),
             const SizedBox(height: 16),
@@ -140,6 +170,17 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.straighten),
               ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _imagePathController,
+              decoration: const InputDecoration(
+                labelText: 'URL hình ảnh (tùy chọn)',
+                hintText: 'https://...',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.image),
+              ),
+              keyboardType: TextInputType.url,
             ),
             const SizedBox(height: 32),
             FilledButton(

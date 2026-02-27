@@ -32,15 +32,19 @@ class Invoice {
   }
 
   factory Invoice.fromMap(Map<String, dynamic> map) {
+    final rawItems = map['items'];
+    final itemsList = rawItems is List ? rawItems : const [];
+
     return Invoice(
-      id: map['id'] as String,
-      items: (map['items'] as List)
-          .map((e) => SaleItem.fromMap(e as Map<String, dynamic>))
+      id: (map['id'] ?? '').toString(),
+      items: itemsList
+          .whereType<Map>()
+          .map((e) => SaleItem.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
       subtotal: (map['subtotal'] as num).toDouble(),
       discountAmount: (map['discountAmount'] as num?)?.toDouble() ?? 0,
       total: (map['total'] as num).toDouble(),
-      createdAt: DateTime.parse(map['createdAt'] as String),
+      createdAt: DateTime.tryParse((map['createdAt'] ?? '').toString()) ?? DateTime.now(),
       note: map['note'] as String?,
     );
   }

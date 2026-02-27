@@ -23,8 +23,29 @@ class StorageService {
       Hive.init(dir.path);
     }
 
-    _productsBoxInstance = await Hive.openBox(_productsBox);
-    _invoicesBoxInstance = await Hive.openBox(_invoicesBox);
+    _productsBoxInstance = await _openBoxWithRetry(_productsBox);
+    _invoicesBoxInstance = await _openBoxWithRetry(_invoicesBox);
+  }
+
+  static Future<Box> _openBoxWithRetry(String name) async {
+    if (Hive.isBoxOpen(name)) {
+      return Hive.box(name);
+    }
+
+    const maxAttempts = 6;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await Hive.openBox(name);
+      } catch (e) {
+        final isLockError = e is FileSystemException &&
+            e.osError?.errorCode == 35;
+        if (!isLockError || attempt == maxAttempts) {
+          rethrow;
+        }
+        await Future.delayed(Duration(milliseconds: 250 * attempt));
+      }
+    }
+    throw StateError('Không mở được Hive box: $name');
   }
 
   static Box get _productsBoxRef =>

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/product.dart';
@@ -15,11 +17,28 @@ class ProductsScreen extends StatefulWidget {
 class _ProductsScreenState extends State<ProductsScreen> {
   List<Product> _products = [];
   final _formatCurrency = NumberFormat.currency(locale: 'vi_VN', symbol: '₫');
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadProducts();
+    _searchController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<Product> get _filteredProducts {
+    final q = _searchController.text.toLowerCase().trim();
+    if (q.isEmpty) return _products;
+    return _products
+        .where((p) =>
+            p.name.toLowerCase().contains(q) || p.code.toLowerCase().contains(q))
+        .toList();
   }
 
   void _loadProducts() {
@@ -168,11 +187,45 @@ class _ProductsScreenState extends State<ProductsScreen> {
             )
           : RefreshIndicator(
               onRefresh: () async => _loadProducts(),
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _products.length,
-                itemBuilder: (context, index) {
-                  final product = _products[index];
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Tìm theo tên hoặc mã sản phẩm...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () => _searchController.clear(),
+                              )
+                            : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _filteredProducts.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Không tìm thấy sản phẩm',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                            itemCount: _filteredProducts.length,
+                            itemBuilder: (context, index) {
+                              final product = _filteredProducts[index];
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
                     elevation: 2,
@@ -181,13 +234,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         horizontal: 16,
                         vertical: 8,
                       ),
-                      leading: CircleAvatar(
-                        backgroundColor: const Color(0xFF2E7D32).withOpacity(0.2),
-                        child: const Icon(
-                          Icons.shopping_bag,
-                          color: Color(0xFF2E7D32),
-                        ),
-                      ),
+                      leading: _ProductLeading(product: product),
                       title: Text(
                         product.name,
                         style: const TextStyle(
@@ -264,6 +311,73 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 },
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductLeading extends StatelessWidget {
+  final Product product;
+
+  const _ProductLeading({required this.product});
+
+  @override
+  Widget build(BuildContext context) {
+    final path = product.imagePath?.trim();
+    if (path == null || path.isEmpty) return _placeholder();
+
+    final isNetworkUrl = path.startsWith('http://') || path.startsWith('https://');
+    final isLocalPath = path.startsWith('file://') ||
+        path.startsWith('/') ||
+        (path.length > 2 && path[1] == ':');
+
+    if (isNetworkUrl) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: SizedBox(
+          width: 56,
+          height: 56,
+          child: Image.network(
+            path,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _placeholder(),
+          ),
+        ),
+      );
+    }
+
+    if (isLocalPath) {
+      final filePath = path.startsWith('file://') ? path.substring(7) : path;
+      final file = File(filePath);
+      if (file.existsSync()) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: SizedBox(
+            width: 56,
+            height: 56,
+            child: Image.file(
+              file,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _placeholder(),
+            ),
+          ),
+        );
+      }
+    }
+
+    return _placeholder();
+  }
+
+  Widget _placeholder() {
+    return CircleAvatar(
+      radius: 28,
+      backgroundColor: const Color(0xFF2E7D32).withOpacity(0.2),
+      child: const Icon(
+        Icons.shopping_bag,
+        color: Color(0xFF2E7D32),
+      ),
     );
   }
 }
