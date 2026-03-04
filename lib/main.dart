@@ -87,7 +87,7 @@ class _MainScreenState extends State<MainScreen> {
     final screens = [
       const ProductsScreen(),
       SalesScreen(isActive: _currentIndex == 1),
-      const InvoicesScreen(),
+      InvoicesScreen(isActive: _currentIndex == 2),
     ];
     return Scaffold(
       body: IndexedStack(

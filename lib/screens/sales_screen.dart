@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../models/product.dart';
@@ -35,10 +36,13 @@ class _InvoiceTabData {
 
 class _SalesScreenState extends State<SalesScreen> {
   final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
   final _customerSearchController = TextEditingController();
   final _tabScrollController = ScrollController();
+  final _searchDropdownScrollController = ScrollController();
   final _cartScrollKey = GlobalKey();
   bool _showSearchResults = true;
+  int _searchFocusIndex = -1;
   final List<_InvoiceTabData> _tabs = [];
   int _activeTabIndex = 0;
   int _tabCounter = 1;
@@ -75,8 +79,10 @@ class _SalesScreenState extends State<SalesScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
     _customerSearchController.dispose();
     _tabScrollController.dispose();
+    _searchDropdownScrollController.dispose();
     for (final t in _tabs) {
       t.tenderController.dispose();
     }
@@ -148,13 +154,34 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   void _filterProducts() {
-    final query = _searchController.text.toLowerCase().trim();
+    final query = _searchController.text.trim();
+    final queryLower = query.toLowerCase();
+
+    if (query.isEmpty) {
+      setState(() => _filteredProducts = List.from(_products));
+      return;
+    }
+
+    // Khớp chính xác theo mã vạch/mã hàng (máy quét gõ mã rồi Enter,
+    // nhưng một số máy không gửi Enter — kiểm tra sau mỗi ký tự).
+    final exactMatch = _products.where((p) => p.code.toLowerCase() == queryLower).toList();
+    if (exactMatch.length == 1) {
+      // Tìm đúng 1 sản phẩm theo mã → thêm ngay vào giỏ, không hiện dropdown.
+      Future.microtask(() {
+        if (!mounted) return;
+        _upsertCartItem(exactMatch.first, qty: 1);
+        _searchController.clear();
+        setState(() {
+          _filteredProducts = List.from(_products);
+          _showSearchResults = false;
+        });
+      });
+      return;
+    }
+
     setState(() {
-      if (query.isEmpty) {
-        _filteredProducts = List.from(_products);
-      } else {
-        _filteredProducts = _products.where((p) => p.name.toLowerCase().contains(query) || p.code.toLowerCase().contains(query)).toList();
-      }
+      _filteredProducts = _products.where((p) => p.name.toLowerCase().contains(queryLower) || p.code.toLowerCase().contains(queryLower)).toList();
+      _searchFocusIndex = -1;
     });
   }
 
@@ -174,14 +201,57 @@ class _SalesScreenState extends State<SalesScreen> {
       final idx = _cart.indexOf(existing);
       _cart[idx] = existing.copyWith(quantity: newQty);
     } else {
-      _cart.insert(0, SaleItem(
-        productId: product.id,
-        productName: product.name,
-        productCode: product.code,
-        unit: product.unit,
-        price: product.price,
-        quantity: qty.clamp(0, maxQty),
-      ));
+      _cart.insert(
+          0,
+          SaleItem(
+            productId: product.id,
+            productName: product.name,
+            productCode: product.code,
+            unit: product.unit,
+            price: product.price,
+            quantity: qty.clamp(0, maxQty),
+          ));
+    }
+  }
+
+  void _handleSearchKey(KeyEvent event) {
+    if (!_showSearchResults || _filteredProducts.isEmpty) return;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return;
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      setState(() {
+        _searchFocusIndex = (_searchFocusIndex + 1).clamp(0, _filteredProducts.length - 1);
+        _scrollDropdownToIndex(_searchFocusIndex);
+      });
+    } else if (key == LogicalKeyboardKey.arrowUp) {
+      setState(() {
+        _searchFocusIndex = (_searchFocusIndex - 1).clamp(0, _filteredProducts.length - 1);
+        _scrollDropdownToIndex(_searchFocusIndex);
+      });
+    } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      if (_searchFocusIndex >= 0 && _searchFocusIndex < _filteredProducts.length) {
+        _selectProductFromSearch(_filteredProducts[_searchFocusIndex]);
+      } else {
+        _addBySearch();
+      }
+    } else if (key == LogicalKeyboardKey.escape) {
+      _hideSearchResults();
+    }
+  }
+
+  void _scrollDropdownToIndex(int index) {
+    const itemHeight = 76.0;
+    final offset = (index * itemHeight).clamp(
+      0.0,
+      _searchDropdownScrollController.hasClients ? _searchDropdownScrollController.position.maxScrollExtent : double.infinity,
+    );
+    if (_searchDropdownScrollController.hasClients) {
+      _searchDropdownScrollController.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
     }
   }
 
@@ -259,13 +329,14 @@ class _SalesScreenState extends State<SalesScreen> {
     final tab = _tabs[_activeTabIndex];
     final items = List<SaleItem>.from(payable);
     final subtotal = items.fold(0.0, (s, i) => s + i.total);
-    final total = (subtotal - tab.discountAmount).clamp(0.0, double.infinity).toDouble();
+    final discount = tab.discountAmount;
+    final total = (subtotal - discount).clamp(0.0, double.infinity).toDouble();
 
     final invoice = Invoice(
       id: const Uuid().v4(),
       items: items,
       subtotal: subtotal,
-      discountAmount: tab.discountAmount,
+      discountAmount: discount,
       total: total,
       createdAt: DateTime.now(),
     );
@@ -281,12 +352,47 @@ class _SalesScreenState extends State<SalesScreen> {
       tab.tenderController.clear();
     });
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Thanh toán thành công: ${_formatCurrency.format(invoice.total)}'),
-          backgroundColor: Colors.green,
+    if (!mounted) return;
+
+    // Hỏi có muốn in hoá đơn không
+    final shouldPrint = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Thanh toán thành công'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Tổng: ${_formatCurrency.format(invoice.total)}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            const Text('Bạn có muốn in hoá đơn không?'),
+          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Không in'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.print),
+            label: const Text('In hoá đơn'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldPrint == true && mounted) {
+      await PrintService.printInvoice(
+        context: context,
+        items: items,
+        subtotal: subtotal,
+        discountAmount: discount,
+        total: total,
+        invoiceId: invoice.id,
+        createdAt: invoice.createdAt,
       );
     }
   }
@@ -368,28 +474,33 @@ class _SalesScreenState extends State<SalesScreen> {
               children: [
                 SizedBox(
                   width: searchW,
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Tìm hoặc quét mã SP...',
-                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.8)),
-                      prefixIcon: const Icon(Icons.search, color: Colors.white),
-                      filled: true,
-                      fillColor: Colors.white.withOpacity(0.2),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
+                  child: KeyboardListener(
+                    focusNode: FocusNode(skipTraversal: true),
+                    onKeyEvent: _handleSearchKey,
+                    child: TextField(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      decoration: InputDecoration(
+                        hintText: 'Tìm hoặc quét mã SP...',
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.8)),
+                        prefixIcon: const Icon(Icons.search, color: Colors.white),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.2),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      style: const TextStyle(color: Colors.white),
+                      onTap: () {
+                        if (!_showSearchResults) setState(() => _showSearchResults = true);
+                      },
+                      onChanged: (_) {
+                        if (!_showSearchResults) setState(() => _showSearchResults = true);
+                      },
+                      onSubmitted: (_) => _addBySearch(),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                    onTap: () {
-                      if (!_showSearchResults) setState(() => _showSearchResults = true);
-                    },
-                    onChanged: (_) {
-                      if (!_showSearchResults) setState(() => _showSearchResults = true);
-                    },
-                    onSubmitted: (_) => _addBySearch(),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -520,6 +631,7 @@ class _SalesScreenState extends State<SalesScreen> {
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxHeight: 280),
                         child: ListView.separated(
+                          controller: _searchDropdownScrollController,
                           padding: const EdgeInsets.symmetric(vertical: 6),
                           itemCount: _filteredProducts.length,
                           separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey[200]),
@@ -529,6 +641,7 @@ class _SalesScreenState extends State<SalesScreen> {
                               product: p,
                               onTap: () => _selectProductFromSearch(p),
                               formatCompact: _formatCompact,
+                              highlighted: i == _searchFocusIndex,
                             );
                           },
                         ),
@@ -540,31 +653,14 @@ class _SalesScreenState extends State<SalesScreen> {
             ),
           ),
           Container(width: 1, color: Colors.grey[300]),
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 400,
             child: Container(
               color: Colors.white,
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: TextField(
-                        controller: _customerSearchController,
-                        decoration: InputDecoration(
-                          hintText: 'Tìm khách hàng...',
-                          prefixIcon: const Icon(Icons.search, size: 20),
-                          suffixIcon: IconButton(
-                            icon: const Icon(Icons.add, size: 20),
-                            onPressed: () {},
-                          ),
-                          isDense: true,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        ),
-                      ),
-                    ),
                     const Divider(height: 1),
                     Padding(
                       padding: const EdgeInsets.all(16),
@@ -679,157 +775,138 @@ class _SalesScreenState extends State<SalesScreen> {
     );
   }
 
-  Widget _buildCartHeader() {
-    final screenW = MediaQuery.sizeOf(context).width;
-    final isCompact = screenW < 1200;
-    final headerFont = isCompact ? 11.0 : 12.0;
-    final nameFlex = isCompact ? 3 : 4;
-    final qtyFlex = isCompact ? 3 : 2;
-    final actionWidth = isCompact ? 32.0 : 40.0;
+  // Layout cột cố định dùng chung cho header và row:
+  // [32] # | [28] del | [Expanded(2)] mã | [Expanded(3)] tên | [56] ĐVT | [110] SL (−/+) | [80] đơn giá | [80] thành tiền | [32] menu
+  static const double _colDel = 28;
+  static const double _colDvt = 56;
+  static const double _colQty = 110;
+  static const double _colPrice = 80;
+  static const double _colTotal = 88;
+  static const double _colMenu = 32;
+  static const double _colIdx = 32;
+  static const double _colGap = 8;
 
+  Widget _buildCartHeader() {
+    final style = TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: 12);
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
       decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
       child: Row(
         children: [
-          SizedBox(width: 32, child: Text('#', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont))),
-          const SizedBox(width: 8),
-          Expanded(
-              flex: 2,
-              child: Text('Mã SP',
-                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont), overflow: TextOverflow.ellipsis)),
-          Expanded(
-              flex: nameFlex,
-              child: Text('Tên hàng',
-                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont), overflow: TextOverflow.ellipsis)),
-          Expanded(
-              flex: 1,
-              child: Text('ĐVT',
-                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont), overflow: TextOverflow.ellipsis)),
-          Expanded(flex: qtyFlex, child: Text('SL', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont))),
-          Expanded(
-              flex: 1,
-              child: Text('Đơn giá',
-                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont), overflow: TextOverflow.ellipsis)),
-          Expanded(
-              flex: 1,
-              child: Text('Thành tiền',
-                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700], fontSize: headerFont), overflow: TextOverflow.ellipsis)),
-          SizedBox(width: actionWidth),
+          SizedBox(width: _colIdx, child: Text('#', style: style)),
+          SizedBox(width: _colGap + _colDel),
+          Expanded(flex: 2, child: Text('Mã SP', style: style, overflow: TextOverflow.ellipsis)),
+          Expanded(flex: 3, child: Text('Tên hàng', style: style, overflow: TextOverflow.ellipsis)),
+          SizedBox(width: _colDvt, child: Text('ĐVT', style: style, overflow: TextOverflow.ellipsis)),
+          SizedBox(width: _colQty, child: Center(child: Text('SL', style: style))),
+          SizedBox(width: _colPrice, child: Text('Đơn giá', style: style, textAlign: TextAlign.right)),
+          SizedBox(width: _colTotal, child: Text('Thành tiền', style: style, textAlign: TextAlign.right)),
+          SizedBox(width: _colMenu),
         ],
       ),
     );
   }
 
   Widget _buildCartRow(SaleItem item, int index) {
-    final screenW = MediaQuery.sizeOf(context).width;
-    final isCompact = screenW < 1200;
-    final nameFlex = isCompact ? 2 : 3;
-    final qtyFlex = isCompact ? 3 : 2;
-    final hideImage = screenW < 1050;
-
-    final product = StorageService.getProductById(item.productId);
-    final hasImage = product != null &&
-        product.imagePath != null &&
-        product.imagePath!.isNotEmpty &&
-        (product.imagePath!.startsWith('http://') || product.imagePath!.startsWith('https://'));
-
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            SizedBox(width: 32, child: Text('$index', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))),
-            const SizedBox(width: 4),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
-              onPressed: () => _removeFromCart(item),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            // #
+            SizedBox(
+              width: _colIdx,
+              child: Text('$index', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             ),
-            if (!hideImage && hasImage) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: Image.network(
-                    product.imagePath!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) =>
-                        Container(color: Colors.grey[200], child: Icon(Icons.inventory_2_outlined, size: 20, color: Colors.grey[500])),
-                  ),
-                ),
+            // Xóa
+            const SizedBox(width: _colGap / 2),
+            SizedBox(
+              width: _colDel,
+              child: IconButton(
+                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                onPressed: () => _removeFromCart(item),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
               ),
-              const SizedBox(width: 8),
-            ],
+            ),
+            // Mã SP
             Expanded(
               flex: 2,
               child: Text(item.productCode, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
             ),
+            // Tên hàng
             Expanded(
-              flex: nameFlex,
+              flex: 3,
               child: Text(item.productName, style: const TextStyle(fontSize: 13), maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
-            Expanded(
-              flex: 1,
+            // ĐVT
+            SizedBox(
+              width: _colDvt,
               child: Text(item.unit, style: TextStyle(fontSize: 12, color: Colors.grey[600]), overflow: TextOverflow.ellipsis),
             ),
-            Expanded(
-              flex: qtyFlex,
+            // SL: − số +
+            SizedBox(
+              width: _colQty,
               child: Row(
-                mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.remove, size: 18),
+                    icon: const Icon(Icons.remove, size: 16),
                     onPressed: () => _updateCartItem(item, item.quantity - 1),
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
                   ),
-                  Text('${item.quantity}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  SizedBox(
+                    width: 38,
+                    child: Text('${item.quantity}', textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.add, size: 18),
+                    icon: const Icon(Icons.add, size: 16),
                     onPressed: () => _updateCartItem(item, item.quantity + 1),
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
                   ),
                 ],
               ),
             ),
-            Expanded(
-              flex: 1,
+            // Đơn giá (bấm để sửa)
+            SizedBox(
+              width: _colPrice,
               child: InkWell(
                 onTap: () => _showEditPriceDialog(item),
-                child: Text(_formatCompact.format(item.price),
-                    style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                  child: Text(_formatCompact.format(item.price),
+                      textAlign: TextAlign.right, style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w500)),
+                ),
               ),
             ),
-            Expanded(
-              flex: 1,
+            // Thành tiền
+            SizedBox(
+              width: _colTotal,
               child: Text(_formatCompact.format(item.total),
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+                  textAlign: TextAlign.right, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             ),
-            IconButton(
-              icon: const Icon(Icons.add_circle_outline, size: 22, color: Color(0xFF1565C0)),
-              onPressed: () => _updateCartItem(item, item.quantity + 1),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, size: 20),
-              padding: EdgeInsets.zero,
-              onSelected: (v) {
-                if (v == 'edit_price') _showEditPriceDialog(item);
-                if (v == 'remove') _removeFromCart(item);
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'edit_price', child: Text('Sửa giá')),
-                const PopupMenuItem(value: 'remove', child: Text('Xóa')),
-              ],
+            // Menu
+            SizedBox(
+              width: _colMenu,
+              child: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 18),
+                padding: EdgeInsets.zero,
+                onSelected: (v) {
+                  if (v == 'edit_price') _showEditPriceDialog(item);
+                  if (v == 'remove') _removeFromCart(item);
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'edit_price', child: Text('Sửa giá')),
+                  const PopupMenuItem(value: 'remove', child: Text('Xóa')),
+                ],
+              ),
             ),
           ],
         ),
@@ -845,7 +922,7 @@ class _SalesScreenState extends State<SalesScreen> {
         Row(
           children: [
             if (extra.isNotEmpty) Text('$extra  ', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-            Text(value, style: TextStyle(fontWeight: bold ? FontWeight.bold : null, fontSize: bold ? 18 : 14, color: color)),
+            Text(value, style: TextStyle(fontWeight: bold ? FontWeight.bold : null, fontSize: bold ? 24 : 18, color: color)),
           ],
         ),
       ],
@@ -857,11 +934,13 @@ class _ProductSearchTile extends StatelessWidget {
   final Product product;
   final VoidCallback onTap;
   final NumberFormat formatCompact;
+  final bool highlighted;
 
   const _ProductSearchTile({
     required this.product,
     required this.onTap,
     required this.formatCompact,
+    this.highlighted = false,
   });
 
   @override
@@ -871,7 +950,7 @@ class _ProductSearchTile extends StatelessWidget {
         (product.imagePath!.startsWith('http://') || product.imagePath!.startsWith('https://'));
 
     return Material(
-      color: Colors.transparent,
+      color: highlighted ? const Color(0xFFE3F2FD) : Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -884,40 +963,40 @@ class _ProductSearchTile extends StatelessWidget {
                 child: SizedBox(
                   width: 56,
                   height: 56,
-                    child: hasImage
-                        ? Image.network(
-                            product.imagePath!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
-                          )
-                        : _buildImagePlaceholder(),
-                  ),
+                  child: hasImage
+                      ? Image.network(
+                          product.imagePath!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
+                        )
+                      : _buildImagePlaceholder(),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        product.name,
-                        style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${formatCompact.format(product.price)} • ${product.code}',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Tồn: ${product.stock}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                      ),
-                    ],
-                  ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      product.name,
+                      style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${formatCompact.format(product.price)} • ${product.code}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Tồn: ${product.stock}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                  ],
                 ),
+              ),
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Icon(Icons.add_circle_outline, color: Colors.grey[400], size: 22),

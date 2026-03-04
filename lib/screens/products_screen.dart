@@ -35,10 +35,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List<Product> get _filteredProducts {
     final q = _searchController.text.toLowerCase().trim();
     if (q.isEmpty) return _products;
-    return _products
-        .where((p) =>
-            p.name.toLowerCase().contains(q) || p.code.toLowerCase().contains(q))
-        .toList();
+    return _products.where((p) => p.name.toLowerCase().contains(q) || p.code.toLowerCase().contains(q)).toList();
   }
 
   void _loadProducts() {
@@ -213,6 +210,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       ),
                     ),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                    child: Text(
+                      _searchController.text.trim().isEmpty
+                          ? 'Tổng: ${_products.length} sản phẩm'
+                          : 'Hiển thị ${_filteredProducts.length} / ${_products.length} sản phẩm',
+                      style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                    ),
+                  ),
                   Expanded(
                     child: _filteredProducts.isEmpty
                         ? Center(
@@ -226,94 +232,94 @@ class _ProductsScreenState extends State<ProductsScreen> {
                             itemCount: _filteredProducts.length,
                             itemBuilder: (context, index) {
                               final product = _filteredProducts[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    elevation: 2,
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      leading: _ProductLeading(product: product),
-                      title: Text(
-                        product.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
-                        ),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 4),
-                          Text('Mã: ${product.code} | Tồn: ${product.stock} ${product.unit}'),
-                          Text(
-                            _formatCurrency.format(product.price),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2E7D32),
-                            ),
-                          ),
-                        ],
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) async {
-                          if (value == 'edit') {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (ctx) => ProductFormScreen(
-                                  product: product,
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                elevation: 2,
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  leading: _ProductLeading(product: product),
+                                  title: Text(
+                                    product.name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const SizedBox(height: 4),
+                                      Text('Mã: ${product.code} | Tồn: ${product.stock} ${product.unit}'),
+                                      Text(
+                                        _formatCurrency.format(product.price),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF2E7D32),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  trailing: PopupMenuButton<String>(
+                                    onSelected: (value) async {
+                                      if (value == 'edit') {
+                                        await Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (ctx) => ProductFormScreen(
+                                              product: product,
+                                            ),
+                                          ),
+                                        );
+                                        _loadProducts();
+                                      } else if (value == 'delete') {
+                                        _deleteProduct(product);
+                                      }
+                                    },
+                                    itemBuilder: (ctx) => [
+                                      const PopupMenuItem(
+                                        value: 'edit',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.edit),
+                                            SizedBox(width: 8),
+                                            Text('Chỉnh sửa'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.delete, color: Colors.red),
+                                            SizedBox(width: 8),
+                                            Text('Xóa', style: TextStyle(color: Colors.red)),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  onTap: () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (ctx) => ProductFormScreen(
+                                          product: product,
+                                        ),
+                                      ),
+                                    );
+                                    _loadProducts();
+                                  },
                                 ),
-                              ),
-                            );
-                            _loadProducts();
-                          } else if (value == 'delete') {
-                            _deleteProduct(product);
-                          }
-                        },
-                        itemBuilder: (ctx) => [
-                          const PopupMenuItem(
-                            value: 'edit',
-                            child: Row(
-                              children: [
-                                Icon(Icons.edit),
-                                SizedBox(width: 8),
-                                Text('Chỉnh sửa'),
-                              ],
-                            ),
+                              );
+                            },
                           ),
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Row(
-                              children: [
-                                Icon(Icons.delete, color: Colors.red),
-                                SizedBox(width: 8),
-                                Text('Xóa', style: TextStyle(color: Colors.red)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      onTap: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (ctx) => ProductFormScreen(
-                              product: product,
-                            ),
-                          ),
-                        );
-                        _loadProducts();
-                      },
-                    ),
-                  );
-                },
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -329,9 +335,7 @@ class _ProductLeading extends StatelessWidget {
     if (path == null || path.isEmpty) return _placeholder();
 
     final isNetworkUrl = path.startsWith('http://') || path.startsWith('https://');
-    final isLocalPath = path.startsWith('file://') ||
-        path.startsWith('/') ||
-        (path.length > 2 && path[1] == ':');
+    final isLocalPath = path.startsWith('file://') || path.startsWith('/') || (path.length > 2 && path[1] == ':');
 
     if (isNetworkUrl) {
       return ClipRRect(

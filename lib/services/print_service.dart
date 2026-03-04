@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -11,6 +12,20 @@ import '../models/sale_item.dart';
 class PrintService {
   static final _fmt = NumberFormat('#,###', 'vi_VN');
   static final _dateFmt = DateFormat('dd/MM/yyyy HH:mm');
+
+  /// Khổ giấy in mặc định: K80 (80mm). Dùng cho tất cả hóa đơn.
+  static const double k80WidthPt = 226.77; // 80mm
+  static const double kMarginPt = 8;
+  static const double kTrailingLinesPt = 36; // 3 dòng trắng cuối (~12pt/dòng)
+
+  static PdfPageFormat get pageFormatK80 => PdfPageFormat(
+        k80WidthPt,
+        double.infinity, // chiều dài theo nội dung
+        marginLeft: kMarginPt,
+        marginRight: kMarginPt,
+        marginTop: kMarginPt,
+        marginBottom: kMarginPt,
+      );
 
   /// Mở hộp thoại in hệ thống (giống Ctrl+P) với PDF hóa đơn.
   static Future<void> printInvoice({
@@ -25,23 +40,19 @@ class PrintService {
   }) async {
     await Printing.layoutPdf(
       name: 'Hoa_don_${invoiceId ?? ''}',
-      onLayout: (PdfPageFormat format) async {
-        return _buildPdf(
-          format: format,
-          items: items,
-          subtotal: subtotal,
-          discountAmount: discountAmount,
-          total: total,
-          invoiceId: invoiceId,
-          createdAt: createdAt ?? DateTime.now(),
-          shopName: shopName,
-        );
-      },
+      onLayout: (_) async => _buildPdf(
+        items: items,
+        subtotal: subtotal,
+        discountAmount: discountAmount,
+        total: total,
+        invoiceId: invoiceId,
+        createdAt: createdAt ?? DateTime.now(),
+        shopName: shopName,
+      ),
     );
   }
 
   static Future<Uint8List> _buildPdf({
-    required PdfPageFormat format,
     required List<SaleItem> items,
     required double subtotal,
     required double discountAmount,
@@ -51,19 +62,14 @@ class PrintService {
     required String shopName,
   }) async {
     final doc = pw.Document();
-    final font = await PdfGoogleFonts.notoSansRegular();
-    final fontBold = await PdfGoogleFonts.notoSansBold();
-
-    // Giấy 80mm rộng
-    final pageFormat = PdfPageFormat(
-      format.width.clamp(0, 226.77), // 80mm = 226.77pt
-      double.infinity,
-      marginAll: 8,
-    );
+    // Arial Unicode MS — font Unicode đầy đủ, hỗ trợ tiếng Việt
+    final fontData = await rootBundle.load('assets/fonts/ArialUnicode.ttf');
+    final font = pw.Font.ttf(fontData);
+    final fontBold = font; // dùng chung, Arial Unicode chỉ có 1 weight
 
     doc.addPage(
       pw.Page(
-        pageFormat: pageFormat,
+        pageFormat: pageFormatK80,
         build: (pw.Context ctx) {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
@@ -185,7 +191,7 @@ class PrintService {
                   style: pw.TextStyle(font: fontBold, fontSize: 11),
                 ),
               ),
-              pw.SizedBox(height: 4),
+              pw.SizedBox(height: kTrailingLinesPt), // 3 dòng trắng cuối trước khi cắt giấy
             ],
           );
         },

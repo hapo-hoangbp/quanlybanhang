@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/invoice.dart';
 import '../services/storage_service.dart';
+import '../services/print_service.dart';
 
 class InvoicesScreen extends StatefulWidget {
-  const InvoicesScreen({super.key});
+  final bool isActive;
+
+  const InvoicesScreen({super.key, this.isActive = true});
 
   @override
   State<InvoicesScreen> createState() => _InvoicesScreenState();
@@ -19,6 +22,14 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   void initState() {
     super.initState();
     _loadInvoices();
+  }
+
+  @override
+  void didUpdateWidget(covariant InvoicesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _loadInvoices();
+    }
   }
 
   void _loadInvoices() {
@@ -93,7 +104,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                       ),
                       children: [
                         Padding(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -123,6 +134,25 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                               _buildRow('Tổng cộng:',
                                   _formatCurrency.format(inv.total),
                                   bold: true),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () async {
+                                    await PrintService.printInvoice(
+                                      context: context,
+                                      items: inv.items,
+                                      subtotal: inv.subtotal,
+                                      discountAmount: inv.discountAmount,
+                                      total: inv.total,
+                                      invoiceId: inv.id,
+                                      createdAt: inv.createdAt,
+                                    );
+                                  },
+                                  icon: const Icon(Icons.print),
+                                  label: const Text('In lại hoá đơn'),
+                                ),
+                              ),
                             ],
                           ),
                         ),
