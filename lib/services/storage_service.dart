@@ -76,6 +76,48 @@ class StorageService {
     await saveProducts(products);
   }
 
+  static Future<ProductUpsertResult> upsertProductsByCode(List<Product> incoming) async {
+    final products = getProducts();
+    final codeToIndex = <String, int>{};
+    for (var i = 0; i < products.length; i++) {
+      final key = _normalizeCode(products[i].code);
+      if (key.isEmpty) continue;
+      codeToIndex.putIfAbsent(key, () => i);
+    }
+
+    var inserted = 0;
+    var updated = 0;
+
+    for (final item in incoming) {
+      final key = _normalizeCode(item.code);
+      final existingIndex = key.isEmpty ? null : codeToIndex[key];
+      if (existingIndex == null) {
+        products.add(item);
+        if (key.isNotEmpty) {
+          codeToIndex[key] = products.length - 1;
+        }
+        inserted++;
+        continue;
+      }
+
+      final current = products[existingIndex];
+      products[existingIndex] = Product(
+        id: current.id,
+        name: item.name,
+        code: item.code,
+        price: item.price,
+        costPrice: item.costPrice,
+        stock: item.stock,
+        unit: item.unit,
+        imagePath: (item.imagePath != null && item.imagePath!.trim().isNotEmpty) ? item.imagePath : current.imagePath,
+      );
+      updated++;
+    }
+
+    await saveProducts(products);
+    return ProductUpsertResult(inserted: inserted, updated: updated);
+  }
+
   static Future<void> updateProduct(Product product) async {
     final products = getProducts();
     final index = products.indexWhere((p) => p.id == product.id);
@@ -119,4 +161,18 @@ class StorageService {
       await updateProduct(product);
     }
   }
+
+  static String _normalizeCode(String value) {
+    return value.trim().toLowerCase();
+  }
+}
+
+class ProductUpsertResult {
+  final int inserted;
+  final int updated;
+
+  const ProductUpsertResult({
+    required this.inserted,
+    required this.updated,
+  });
 }

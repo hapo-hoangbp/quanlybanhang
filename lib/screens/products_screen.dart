@@ -8,7 +8,9 @@ import '../services/excel_import_service.dart';
 import 'product_form_screen.dart';
 
 class ProductsScreen extends StatefulWidget {
-  const ProductsScreen({super.key});
+  final bool isActive;
+
+  const ProductsScreen({super.key, this.isActive = true});
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -24,6 +26,14 @@ class _ProductsScreenState extends State<ProductsScreen> {
     super.initState();
     _loadProducts();
     _searchController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void didUpdateWidget(covariant ProductsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _loadProducts();
+    }
   }
 
   @override
@@ -60,14 +70,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
       );
       return;
     }
-    for (final p in result.products) {
-      await StorageService.addProduct(p);
-    }
+    final upsertResult = await StorageService.upsertProductsByCode(result.products);
     _loadProducts();
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          'Đã import ${result.products.length} sản phẩm${result.skipped > 0 ? ' (bỏ qua ${result.skipped} dòng)' : ''}',
+          'Import xong: thêm ${upsertResult.inserted}, cập nhật ${upsertResult.updated}'
+          '${result.skipped > 0 ? ' (bỏ qua ${result.skipped} dòng)' : ''}',
         ),
         backgroundColor: Colors.green,
       ),

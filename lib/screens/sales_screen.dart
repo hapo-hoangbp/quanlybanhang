@@ -8,6 +8,7 @@ import '../models/invoice.dart';
 import '../services/storage_service.dart';
 import '../services/print_service.dart';
 import '../utils/price_validator.dart';
+import '../utils/vnd_input_formatter.dart';
 
 class SalesScreen extends StatefulWidget {
   final bool isActive;
@@ -275,18 +276,177 @@ class _SalesScreenState extends State<SalesScreen> {
     });
   }
 
-  void _selectFirstResultOnEnter() {
+  Future<void> _selectFirstResultOnEnter() async {
     final q = _searchController.text.trim();
     if (q.isEmpty) return;
 
     final exact = _products.where((p) => p.code.toLowerCase() == q.toLowerCase()).firstOrNull;
     final chosen = exact ?? (_filteredProducts.isNotEmpty ? _filteredProducts.first : null);
-    if (chosen == null) return;
-    _selectProductFromSearch(chosen);
+    if (chosen != null) {
+      _selectProductFromSearch(chosen);
+      return;
+    }
+
+    final created = await _showQuickAddProductDialog(q);
+    if (created == null || !mounted) return;
+
+    _loadProducts();
+    setState(() {
+      _upsertCartItem(created, qty: 1);
+      _showSearchResults = false;
+      _searchController.clear();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Đã thêm "${created.name}" và đưa vào giỏ hàng'),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
-  void _addBySearch() {
-    _selectFirstResultOnEnter();
+  Future<void> _addBySearch() async {
+    await _selectFirstResultOnEnter();
+  }
+
+  Future<Product?> _showQuickAddProductDialog(String barcode) async {
+    final normalizedCode = barcode.trim();
+    if (normalizedCode.isEmpty) return null;
+
+    final existed = _products.where((p) => p.code.toLowerCase() == normalizedCode.toLowerCase()).firstOrNull;
+    if (existed != null) return existed;
+
+    final formKey = GlobalKey<FormState>();
+    final nameController = TextEditingController();
+    final priceController = TextEditingController();
+    final stockController = TextEditingController(text: '0');
+    final unitController = TextEditingController(text: 'cái');
+
+    final result = await showDialog<Product>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mã chưa có - thêm sản phẩm'),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  initialValue: normalizedCode,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Mã vạch / Mã SP',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.qr_code),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Tên sản phẩm',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.shopping_bag),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Nhập tên sản phẩm' : null,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: priceController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly, VndPriceInputFormatter()],
+                  decoration: const InputDecoration(
+                    labelText: 'Giá bán (VNĐ)',
+                    hintText: 'VD: 15.000',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.sell),
+                  ),
+                  validator: (v) => validateVndPrice(v, fieldName: 'Giá bán'),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: stockController,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        decoration: const InputDecoration(
+                          labelText: 'Tồn kho',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.inventory_2),
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return 'Nhập tồn kho';
+                          final parsed = int.tryParse(v);
+                          if (parsed == null) return 'Tồn kho không hợp lệ';
+                          if (parsed < 0) return 'Tồn kho phải >= 0';
+                          return null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: unitController,
+                        decoration: const InputDecoration(
+                          labelText: 'Đơn vị',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.straighten),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Hủy'),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+
+              final duplicate = StorageService.getProducts()
+                  .where((p) => p.code.toLowerCase() == normalizedCode.toLowerCase())
+                  .firstOrNull;
+              if (duplicate != null) {
+                if (!ctx.mounted) return;
+                Navigator.of(ctx).pop(duplicate);
+                return;
+              }
+
+              final newProduct = Product(
+                id: const Uuid().v4(),
+                name: nameController.text.trim(),
+                code: normalizedCode,
+                price: parseVndPrice(priceController.text) ?? 0,
+                stock: int.tryParse(stockController.text) ?? 0,
+                unit: unitController.text.trim().isEmpty ? 'cái' : unitController.text.trim(),
+              );
+              await StorageService.addProduct(newProduct);
+              if (!ctx.mounted) return;
+              Navigator.of(ctx).pop(newProduct);
+            },
+            icon: const Icon(Icons.save),
+            label: const Text('Thêm và bán'),
+          ),
+        ],
+      ),
+    );
+
+    nameController.dispose();
+    priceController.dispose();
+    stockController.dispose();
+    unitController.dispose();
+    return result;
   }
 
   void _updateCartItem(SaleItem item, int newQty) {

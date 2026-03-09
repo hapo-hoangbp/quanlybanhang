@@ -13,9 +13,10 @@ class PrintService {
   static final _fmt = NumberFormat('#,###', 'vi_VN');
   static final _dateFmt = DateFormat('dd/MM/yyyy HH:mm');
 
-  /// Khổ giấy in mặc định: K80 (80mm). Dùng cho tất cả hóa đơn.
-  static const double k80WidthPt = 226.77; // 80mm
-  static const double kMarginPt = 8;
+  /// Giấy K80 nhưng vùng in thực tế của đa số máy chỉ khoảng 72mm.
+  /// Dùng chiều rộng hữu dụng để tránh tràn/cắt cột số tiền bên phải.
+  static const double k80WidthPt = 204.09; // 72mm printable width
+  static const double kMarginPt = 6;
   static const double kTrailingLinesPt = 36; // 3 dòng trắng cuối (~12pt/dòng)
 
   static PdfPageFormat get pageFormatK80 => PdfPageFormat(
@@ -36,7 +37,7 @@ class PrintService {
     required double total,
     String? invoiceId,
     DateTime? createdAt,
-    String shopName = 'Quản lý tạp hoá',
+    String shopName = 'Tạp Hoá Hoàng Dung',
   }) async {
     await Printing.layoutPdf(
       name: 'Hoa_don_${invoiceId ?? ''}',
@@ -115,15 +116,15 @@ class PrintService {
                     child: pw.Text('Hàng hoá', style: pw.TextStyle(font: fontBold, fontSize: 9)),
                   ),
                   pw.SizedBox(
-                    width: 28,
+                    width: 24,
                     child: pw.Text('SL', style: pw.TextStyle(font: fontBold, fontSize: 9), textAlign: pw.TextAlign.center),
                   ),
                   pw.SizedBox(
-                    width: 52,
+                    width: 44,
                     child: pw.Text('Đơn giá', style: pw.TextStyle(font: fontBold, fontSize: 9), textAlign: pw.TextAlign.right),
                   ),
                   pw.SizedBox(
-                    width: 52,
+                    width: 44,
                     child: pw.Text('T.tiền', style: pw.TextStyle(font: fontBold, fontSize: 9), textAlign: pw.TextAlign.right),
                   ),
                 ],
@@ -145,7 +146,7 @@ class PrintService {
                         children: [
                           pw.Expanded(flex: 4, child: pw.SizedBox()),
                           pw.SizedBox(
-                            width: 28,
+                            width: 24,
                             child: pw.Text(
                               '${item.quantity}',
                               style: pw.TextStyle(font: font, fontSize: 9),
@@ -153,7 +154,7 @@ class PrintService {
                             ),
                           ),
                           pw.SizedBox(
-                            width: 52,
+                            width: 44,
                             child: pw.Text(
                               _fmt.format(item.price),
                               style: pw.TextStyle(font: font, fontSize: 9),
@@ -161,7 +162,7 @@ class PrintService {
                             ),
                           ),
                           pw.SizedBox(
-                            width: 52,
+                            width: 44,
                             child: pw.Text(
                               _fmt.format(item.total),
                               style: pw.TextStyle(font: fontBold, fontSize: 9),
@@ -179,8 +180,7 @@ class PrintService {
 
               // Tổng cộng
               _summaryRow('Tổng tiền hàng', _fmt.format(subtotal), font: font, fontBold: font),
-              if (discountAmount > 0)
-                _summaryRow('Giảm giá', '- ${_fmt.format(discountAmount)}', font: font, fontBold: font),
+              if (discountAmount > 0) _summaryRow('Giảm giá', '- ${_fmt.format(discountAmount)}', font: font, fontBold: font),
               pw.Divider(thickness: 0.5),
               _summaryRow('TỔNG THANH TOÁN', '${_fmt.format(total)} đ', font: fontBold, fontBold: fontBold, large: true),
 
@@ -212,10 +212,19 @@ class PrintService {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 1.5),
       child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Text(label, style: pw.TextStyle(font: fontBold, fontSize: size)),
-          pw.Text(value, style: pw.TextStyle(font: fontBold, fontSize: size)),
+          pw.Expanded(
+            child: pw.Text(label, style: pw.TextStyle(font: fontBold, fontSize: size)),
+          ),
+          pw.SizedBox(
+            width: 54,
+            child: pw.Text(
+              value,
+              style: pw.TextStyle(font: fontBold, fontSize: size),
+              textAlign: pw.TextAlign.right,
+            ),
+          ),
         ],
       ),
     );

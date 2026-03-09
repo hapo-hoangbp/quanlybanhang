@@ -3,7 +3,7 @@ import 'dart:isolate';
 import 'dart:convert';
 
 import 'package:archive/archive.dart';
-import 'package:excel/excel.dart' show Excel, Data, TextCellValue, IntCellValue, DoubleCellValue;
+import 'package:excel/excel.dart' show Excel, Data, Sheet, TextCellValue, IntCellValue, DoubleCellValue;
 import 'package:file_picker/file_picker.dart';
 import 'package:uuid/uuid.dart';
 
@@ -35,12 +35,13 @@ class ExcelImportService {
     }
 
     final file = result.files.single;
-    if (file.bytes != null && file.bytes!.isNotEmpty) {
-      return importFromBytes(file.bytes!);
-    }
+    // Trên desktop (đặc biệt Windows), ưu tiên đọc theo path để tránh sai lệch dữ liệu.
     final path = file.path;
     if (path != null && path.isNotEmpty) {
       return importFromPath(path);
+    }
+    if (file.bytes != null && file.bytes!.isNotEmpty) {
+      return importFromBytes(file.bytes!);
     }
     return ExcelImportResult(products: [], error: 'Không đọc được file');
   }
@@ -83,10 +84,33 @@ class ExcelImportService {
         }
       }
 
-      final sheet = excel.tables.keys.isNotEmpty ? (excel.tables[excel.tables.keys.first] ?? excel.tables.values.first) : null;
-      if (sheet == null || sheet.rows.isEmpty) {
+      final parsed = _pickBestSheet(excel);
+      if (parsed == null || parsed.products.isEmpty) {
         return ExcelImportResult(products: [], error: 'File Excel trống');
       }
+
+      return ExcelImportResult(products: parsed.products, skipped: parsed.skipped);
+    } catch (e) {
+      return ExcelImportResult(products: [], error: 'Lỗi đọc file: $e');
+    }
+  }
+
+  static _SheetParseResult? _pickBestSheet(Excel excel) {
+    _SheetParseResult? best;
+    for (final entry in excel.tables.entries) {
+      final result = _parseSheet(entry.key, entry.value);
+      if (result == null) continue;
+      if (best == null ||
+          result.products.length > best.products.length ||
+          (result.products.length == best.products.length && result.headerMatches > best.headerMatches)) {
+        best = result;
+      }
+    }
+    return best;
+  }
+
+  static _SheetParseResult? _parseSheet(String sheetName, Sheet sheet) {
+    if (sheet.rows.isEmpty) return null;
 
       int nameCol = -1;
       int codeCol = -1;
@@ -94,24 +118,40 @@ class ExcelImportService {
       int stockCol = -1;
       int imageCol = -1;
       int dataStartRow = 0;
+      var headerMatches = 0;
 
       final firstRow = sheet.rows.isNotEmpty ? sheet.rows[0] : <Data?>[];
-      final headerTexts = firstRow.map((c) => _cellValue(c)?.toString().toLowerCase().trim() ?? '').toList();
+      final headerTexts = firstRow.map((c) => _normalizeHeader(_cellValue(c)?.toString() ?? '')).toList();
 
       // Chỉ map theo yêu cầu: Mã hàng, Tên hàng, Giá bán, Tồn kho, Hình ảnh.
-      final nameKeywords = ['tên hàng', 'ten hang', 'tên sp', 'tên sản phẩm', 'sản phẩm', 'san pham'];
-      final codeKeywords = ['mã hàng', 'ma hang', 'mã sp', 'mã sản phẩm', 'code', 'sku'];
-      final priceKeywords = ['giá bán', 'gia ban', 'đơn giá', 'don gia', 'giá', 'gia'];
-      final stockKeywords = ['tồn kho', 'ton kho', 'tồn', 'ton'];
-      final imageKeywords = ['hình ảnh', 'hinh anh', 'ảnh', 'anh', 'image', 'url ảnh', 'url hinh anh'];
+      final nameKeywords = ['ten hang', 'ten sp', 'ten san pham', 'san pham'];
+      final codeKeywords = ['ma hang', 'ma sp', 'ma san pham', 'code', 'sku'];
+      final priceKeywords = ['gia ban', 'don gia', 'gia'];
+      final stockKeywords = ['ton kho', 'ton'];
+      final imageKeywords = ['hinh anh', 'anh', 'image', 'url anh', 'url hinh anh'];
 
       for (var i = 0; i < headerTexts.length; i++) {
         final h = headerTexts[i];
-        if (nameCol < 0 && nameKeywords.any((k) => h.contains(k))) nameCol = i;
-        if (codeCol < 0 && codeKeywords.any((k) => h.contains(k))) codeCol = i;
-        if (priceCol < 0 && priceKeywords.any((k) => h.contains(k))) priceCol = i;
-        if (stockCol < 0 && stockKeywords.any((k) => h.contains(k))) stockCol = i;
-        if (imageCol < 0 && imageKeywords.any((k) => h.contains(k))) imageCol = i;
+        if (nameCol < 0 && nameKeywords.any((k) => h.contains(k))) {
+          nameCol = i;
+          headerMatches++;
+        }
+        if (codeCol < 0 && codeKeywords.any((k) => h.contains(k))) {
+          codeCol = i;
+          headerMatches++;
+        }
+        if (priceCol < 0 && priceKeywords.any((k) => h.contains(k))) {
+          priceCol = i;
+          headerMatches++;
+        }
+        if (stockCol < 0 && stockKeywords.any((k) => h.contains(k))) {
+          stockCol = i;
+          headerMatches++;
+        }
+        if (imageCol < 0 && imageKeywords.any((k) => h.contains(k))) {
+          imageCol = i;
+          headerMatches++;
+        }
       }
 
       // Chế độ import "dễ dãi" theo file hiện tại:
@@ -174,11 +214,13 @@ class ExcelImportService {
           imagePath: (imagePath != null && imagePath.isNotEmpty) ? imagePath : null,
         ));
       }
-
-      return ExcelImportResult(products: products, skipped: skipped);
-    } catch (e) {
-      return ExcelImportResult(products: [], error: 'Lỗi đọc file: $e');
-    }
+      if (products.isEmpty && skipped == 0) return null;
+      return _SheetParseResult(
+        sheetName: sheetName,
+        products: products,
+        skipped: skipped,
+        headerMatches: headerMatches,
+      );
   }
 
   static dynamic _cellValue(Data? cell) {
@@ -206,6 +248,83 @@ class ExcelImportService {
     if (value is double) return value.toInt();
     final s = value.toString().replaceAll(RegExp(r'[^\d-]'), '');
     return int.tryParse(s);
+  }
+
+  static String _normalizeHeader(String value) {
+    var s = value.toLowerCase().trim().replaceAll('\ufeff', '');
+    const replacements = <String, String>{
+      'à': 'a',
+      'á': 'a',
+      'ạ': 'a',
+      'ả': 'a',
+      'ã': 'a',
+      'â': 'a',
+      'ầ': 'a',
+      'ấ': 'a',
+      'ậ': 'a',
+      'ẩ': 'a',
+      'ẫ': 'a',
+      'ă': 'a',
+      'ằ': 'a',
+      'ắ': 'a',
+      'ặ': 'a',
+      'ẳ': 'a',
+      'ẵ': 'a',
+      'đ': 'd',
+      'è': 'e',
+      'é': 'e',
+      'ẹ': 'e',
+      'ẻ': 'e',
+      'ẽ': 'e',
+      'ê': 'e',
+      'ề': 'e',
+      'ế': 'e',
+      'ệ': 'e',
+      'ể': 'e',
+      'ễ': 'e',
+      'ì': 'i',
+      'í': 'i',
+      'ị': 'i',
+      'ỉ': 'i',
+      'ĩ': 'i',
+      'ò': 'o',
+      'ó': 'o',
+      'ọ': 'o',
+      'ỏ': 'o',
+      'õ': 'o',
+      'ô': 'o',
+      'ồ': 'o',
+      'ố': 'o',
+      'ộ': 'o',
+      'ổ': 'o',
+      'ỗ': 'o',
+      'ơ': 'o',
+      'ờ': 'o',
+      'ớ': 'o',
+      'ợ': 'o',
+      'ở': 'o',
+      'ỡ': 'o',
+      'ù': 'u',
+      'ú': 'u',
+      'ụ': 'u',
+      'ủ': 'u',
+      'ũ': 'u',
+      'ư': 'u',
+      'ừ': 'u',
+      'ứ': 'u',
+      'ự': 'u',
+      'ử': 'u',
+      'ữ': 'u',
+      'ỳ': 'y',
+      'ý': 'y',
+      'ỵ': 'y',
+      'ỷ': 'y',
+      'ỹ': 'y',
+    };
+    replacements.forEach((k, v) {
+      s = s.replaceAll(k, v);
+    });
+    return s.replaceAll(RegExp(r'\s+'), ' ');
   }
 
   static String? _pickFirstImageUrl(String? raw) {
@@ -390,4 +509,18 @@ class ExcelImportService {
 
     return rewrittenXml;
   }
+}
+
+class _SheetParseResult {
+  final String sheetName;
+  final List<Product> products;
+  final int skipped;
+  final int headerMatches;
+
+  _SheetParseResult({
+    required this.sheetName,
+    required this.products,
+    required this.skipped,
+    required this.headerMatches,
+  });
 }

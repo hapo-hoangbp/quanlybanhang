@@ -85,7 +85,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final screens = [
-      const ProductsScreen(),
+      ProductsScreen(isActive: _currentIndex == 0),
       SalesScreen(isActive: _currentIndex == 1),
       InvoicesScreen(isActive: _currentIndex == 2),
     ];
