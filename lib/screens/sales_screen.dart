@@ -54,6 +54,8 @@ class _SalesScreenState extends State<SalesScreen> {
   List<Product> _filteredProducts = [];
   final _formatCurrency = NumberFormat.currency(locale: 'vi_VN', symbol: '₫');
   final _formatCompact = NumberFormat('#,###', 'vi_VN');
+  bool _isAddingBySearch = false;
+  DateTime? _lastAddBySearchAt;
 
   List<SaleItem> get _cart => _tabs.isNotEmpty ? _tabs[_activeTabIndex].cart : [];
   TextEditingController get _customerController => _tabs.isNotEmpty ? _tabs[_activeTabIndex].customerController : TextEditingController();
@@ -348,7 +350,19 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _addBySearch() async {
-    await _selectFirstResultOnEnter();
+    final now = DateTime.now();
+    if (_lastAddBySearchAt != null &&
+        now.difference(_lastAddBySearchAt!).inMilliseconds < 300) {
+      return;
+    }
+    if (_isAddingBySearch) return;
+    _isAddingBySearch = true;
+    _lastAddBySearchAt = now;
+    try {
+      await _selectFirstResultOnEnter();
+    } finally {
+      _isAddingBySearch = false;
+    }
   }
 
   Future<Product?> _showQuickAddProductDialog(String barcode) async {

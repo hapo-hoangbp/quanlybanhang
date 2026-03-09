@@ -12,6 +12,8 @@ import '../models/sale_item.dart';
 class PrintService {
   static final _fmt = NumberFormat('#,###', 'vi_VN');
   static final _dateFmt = DateFormat('dd/MM/yyyy HH:mm');
+  static const String defaultShopPhone = '0374.72.1993';
+  static const String defaultShopAddress = 'Dịch vụ Chính Vân';
 
   /// Giấy K80 nhưng vùng in thực tế của đa số máy chỉ khoảng 72mm.
   /// Dùng chiều rộng hữu dụng để tránh tràn/cắt cột số tiền bên phải.
@@ -39,6 +41,8 @@ class PrintService {
     DateTime? createdAt,
     String? customerName,
     String shopName = 'Tạp Hoá Hoàng Dung',
+    String shopPhone = defaultShopPhone,
+    String shopAddress = defaultShopAddress,
   }) async {
     await Printing.layoutPdf(
       name: 'Hoa_don_${invoiceId ?? ''}',
@@ -51,6 +55,8 @@ class PrintService {
         createdAt: createdAt ?? DateTime.now(),
         customerName: customerName,
         shopName: shopName,
+        shopPhone: shopPhone,
+        shopAddress: shopAddress,
       ),
     );
   }
@@ -64,6 +70,8 @@ class PrintService {
     required DateTime createdAt,
     String? customerName,
     required String shopName,
+    required String shopPhone,
+    required String shopAddress,
   }) async {
     final doc = pw.Document();
     // Arial Unicode MS — font Unicode đầy đủ, hỗ trợ tiếng Việt
@@ -86,6 +94,25 @@ class PrintService {
                 ),
               ),
               pw.SizedBox(height: 4),
+              if (shopPhone.trim().isNotEmpty) ...[
+                pw.Center(
+                  child: pw.Text(
+                    'SĐT: ${shopPhone.trim()}',
+                    style: pw.TextStyle(font: font, fontSize: 8.5),
+                  ),
+                ),
+                pw.SizedBox(height: 1),
+              ],
+              if (shopAddress.trim().isNotEmpty) ...[
+                pw.Center(
+                  child: pw.Text(
+                    'Địa chỉ: ${shopAddress.trim()}',
+                    style: pw.TextStyle(font: font, fontSize: 8.5),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                ),
+                pw.SizedBox(height: 2),
+              ],
               pw.Center(
                 child: pw.Text(
                   'HÓA ĐƠN BÁN HÀNG',
