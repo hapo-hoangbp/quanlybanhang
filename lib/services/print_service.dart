@@ -37,6 +37,7 @@ class PrintService {
     required double total,
     String? invoiceId,
     DateTime? createdAt,
+    String? customerName,
     String shopName = 'Tạp Hoá Hoàng Dung',
   }) async {
     await Printing.layoutPdf(
@@ -48,6 +49,7 @@ class PrintService {
         total: total,
         invoiceId: invoiceId,
         createdAt: createdAt ?? DateTime.now(),
+        customerName: customerName,
         shopName: shopName,
       ),
     );
@@ -60,6 +62,7 @@ class PrintService {
     required double total,
     String? invoiceId,
     required DateTime createdAt,
+    String? customerName,
     required String shopName,
   }) async {
     final doc = pw.Document();
@@ -102,6 +105,16 @@ class PrintService {
                   child: pw.Text(
                     'Mã HĐ: ${invoiceId.substring(0, 8).toUpperCase()}',
                     style: pw.TextStyle(font: font, fontSize: 8),
+                  ),
+                ),
+              ],
+              if (customerName != null && customerName.trim().isNotEmpty) ...[
+                pw.SizedBox(height: 1),
+                pw.Center(
+                  child: pw.Text(
+                    'Khách: ${customerName.trim()}',
+                    style: pw.TextStyle(font: font, fontSize: 8),
+                    textAlign: pw.TextAlign.center,
                   ),
                 ),
               ],

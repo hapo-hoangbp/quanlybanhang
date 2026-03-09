@@ -22,7 +22,9 @@ class SalesScreen extends StatefulWidget {
 class _InvoiceTabData {
   final String id;
   List<SaleItem> cart;
-  double discountAmount;
+  double discountValue;
+  String discountType; // amount | percent
+  final TextEditingController customerController;
   final TextEditingController tenderController;
   String paymentMethod;
 
@@ -30,7 +32,9 @@ class _InvoiceTabData {
     required this.id,
     List<SaleItem>? cart,
   })  : cart = cart ?? [],
-        discountAmount = 0,
+        discountValue = 0,
+        discountType = 'amount',
+        customerController = TextEditingController(),
         tenderController = TextEditingController(),
         paymentMethod = 'cash';
 }
@@ -38,7 +42,6 @@ class _InvoiceTabData {
 class _SalesScreenState extends State<SalesScreen> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
-  final _customerSearchController = TextEditingController();
   final _tabScrollController = ScrollController();
   final _searchDropdownScrollController = ScrollController();
   final _cartScrollKey = GlobalKey();
@@ -53,7 +56,18 @@ class _SalesScreenState extends State<SalesScreen> {
   final _formatCompact = NumberFormat('#,###', 'vi_VN');
 
   List<SaleItem> get _cart => _tabs.isNotEmpty ? _tabs[_activeTabIndex].cart : [];
-  double get _discountAmount => _tabs.isNotEmpty ? _tabs[_activeTabIndex].discountAmount : 0;
+  TextEditingController get _customerController => _tabs.isNotEmpty ? _tabs[_activeTabIndex].customerController : TextEditingController();
+  double get _discountAmount =>
+      _tabs.isNotEmpty ? _calculateDiscountAmount(_tabs[_activeTabIndex], _subtotal) : 0;
+  String get _discountType => _tabs.isNotEmpty ? _tabs[_activeTabIndex].discountType : 'amount';
+  double get _discountValue => _tabs.isNotEmpty ? _tabs[_activeTabIndex].discountValue : 0;
+  String get _discountDisplayText {
+    final amountText = _formatCompact.format(_discountAmount);
+    if (_discountType == 'percent') {
+      return '- ${_discountValue.toStringAsFixed(_discountValue % 1 == 0 ? 0 : 1)}% ($amountText)';
+    }
+    return '- $amountText';
+  }
 
   TextEditingController get _tenderController => _tabs.isNotEmpty ? _tabs[_activeTabIndex].tenderController : TextEditingController();
   String get _paymentMethod => _tabs.isNotEmpty ? _tabs[_activeTabIndex].paymentMethod : 'cash';
@@ -81,10 +95,10 @@ class _SalesScreenState extends State<SalesScreen> {
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
-    _customerSearchController.dispose();
     _tabScrollController.dispose();
     _searchDropdownScrollController.dispose();
     for (final t in _tabs) {
+      t.customerController.dispose();
       t.tenderController.dispose();
     }
     super.dispose();
@@ -136,6 +150,7 @@ class _SalesScreenState extends State<SalesScreen> {
     );
     if (closed != true || !mounted) return;
     setState(() {
+      tab.customerController.dispose();
       tab.tenderController.dispose();
       _tabs.removeAt(index);
       if (_activeTabIndex >= _tabs.length) _activeTabIndex = _tabs.length - 1;
@@ -171,11 +186,13 @@ class _SalesScreenState extends State<SalesScreen> {
       Future.microtask(() {
         if (!mounted) return;
         _upsertCartItem(exactMatch.first, qty: 1);
-        _searchController.clear();
         setState(() {
+          _searchController.clear();
           _filteredProducts = List.from(_products);
           _showSearchResults = false;
+          _searchFocusIndex = -1;
         });
+        _focusSearchForNextScan();
       });
       return;
     }
@@ -190,6 +207,15 @@ class _SalesScreenState extends State<SalesScreen> {
   double get _amountDue => (_subtotal - _discountAmount).clamp(0, double.infinity);
   bool get _hasPayableItems => _cart.any((i) => i.quantity > 0);
   int get _payableLinesCount => _cart.where((i) => i.quantity > 0).length;
+
+  double _calculateDiscountAmount(_InvoiceTabData tab, double subtotal) {
+    if (subtotal <= 0) return 0;
+    if (tab.discountType == 'percent') {
+      final pct = tab.discountValue.clamp(0, 100);
+      return (subtotal * pct / 100).clamp(0, subtotal).toDouble();
+    }
+    return tab.discountValue.clamp(0, subtotal).toDouble();
+  }
 
   void _upsertCartItem(Product product, {int qty = 1}) {
     // Không phụ thuộc tồn kho: cho phép tăng số lượng tự do.
@@ -266,13 +292,25 @@ class _SalesScreenState extends State<SalesScreen> {
     });
   }
 
+  void _focusSearchForNextScan() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_searchFocusNode.hasFocus) {
+        _searchFocusNode.requestFocus();
+      }
+    });
+  }
+
   void _selectProductFromSearch(Product chosen) {
     Future.microtask(() {
       if (!mounted) return;
       setState(() {
         _upsertCartItem(chosen, qty: 1);
+        _searchController.clear();
         _showSearchResults = false;
+        _searchFocusIndex = -1;
       });
+      _focusSearchForNextScan();
     });
   }
 
@@ -288,14 +326,19 @@ class _SalesScreenState extends State<SalesScreen> {
     }
 
     final created = await _showQuickAddProductDialog(q);
-    if (created == null || !mounted) return;
+    if (created == null || !mounted) {
+      _focusSearchForNextScan();
+      return;
+    }
 
     _loadProducts();
     setState(() {
       _upsertCartItem(created, qty: 1);
+      _searchFocusIndex = -1;
       _showSearchResults = false;
       _searchController.clear();
     });
+    _focusSearchForNextScan();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Đã thêm "${created.name}" và đưa vào giỏ hàng'),
@@ -414,9 +457,7 @@ class _SalesScreenState extends State<SalesScreen> {
             onPressed: () async {
               if (!formKey.currentState!.validate()) return;
 
-              final duplicate = StorageService.getProducts()
-                  .where((p) => p.code.toLowerCase() == normalizedCode.toLowerCase())
-                  .firstOrNull;
+              final duplicate = StorageService.getProducts().where((p) => p.code.toLowerCase() == normalizedCode.toLowerCase()).firstOrNull;
               if (duplicate != null) {
                 if (!ctx.mounted) return;
                 Navigator.of(ctx).pop(duplicate);
@@ -489,16 +530,20 @@ class _SalesScreenState extends State<SalesScreen> {
     final tab = _tabs[_activeTabIndex];
     final items = List<SaleItem>.from(payable);
     final subtotal = items.fold(0.0, (s, i) => s + i.total);
-    final discount = tab.discountAmount;
+    final discount = _calculateDiscountAmount(tab, subtotal);
     final total = (subtotal - discount).clamp(0.0, double.infinity).toDouble();
+    final customerName = tab.customerController.text.trim();
 
     final invoice = Invoice(
       id: const Uuid().v4(),
       items: items,
       subtotal: subtotal,
       discountAmount: discount,
+      discountType: tab.discountType,
+      discountValue: tab.discountValue,
       total: total,
       createdAt: DateTime.now(),
+      customerName: customerName.isEmpty ? null : customerName,
     );
 
     for (final item in items) {
@@ -508,7 +553,9 @@ class _SalesScreenState extends State<SalesScreen> {
 
     setState(() {
       tab.cart.clear();
-      tab.discountAmount = 0;
+      tab.discountType = 'amount';
+      tab.discountValue = 0;
+      tab.customerController.clear();
       tab.tenderController.clear();
     });
 
@@ -524,8 +571,7 @@ class _SalesScreenState extends State<SalesScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Tổng: ${_formatCurrency.format(invoice.total)}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text('Tổng: ${_formatCurrency.format(invoice.total)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             const Text('Bạn có muốn in hoá đơn không?'),
           ],
@@ -553,37 +599,80 @@ class _SalesScreenState extends State<SalesScreen> {
         total: total,
         invoiceId: invoice.id,
         createdAt: invoice.createdAt,
+        customerName: invoice.customerName,
       );
     }
   }
 
   void _showDiscountDialog() {
     final tab = _tabs[_activeTabIndex];
-    final controller = TextEditingController(text: formatVndPrice(tab.discountAmount));
+    var selectedType = tab.discountType;
+    final controller = TextEditingController(
+      text: selectedType == 'percent'
+          ? (tab.discountValue % 1 == 0 ? tab.discountValue.toInt().toString() : tab.discountValue.toString())
+          : formatVndPrice(tab.discountValue),
+    );
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Giảm giá'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Số tiền giảm (VNĐ)',
-            border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => AlertDialog(
+          title: const Text('Giảm giá'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'amount', label: Text('Theo tiền')),
+                    ButtonSegment(value: 'percent', label: Text('Theo %')),
+                  ],
+                  selected: {selectedType},
+                  onSelectionChanged: (selection) {
+                    selectedType = selection.first;
+                    controller.text = selectedType == 'percent' ? '0' : '';
+                    setStateDialog(() {});
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+                  decoration: InputDecoration(
+                    labelText: selectedType == 'percent' ? 'Phần trăm giảm (%)' : 'Số tiền giảm (VNĐ)',
+                    border: const OutlineInputBorder(),
+                    helperText: selectedType == 'percent' ? '0 - 100' : null,
+                  ),
+                ),
+              ],
+            ),
           ),
-          autofocus: true,
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
+            FilledButton(
+              onPressed: () {
+                if (selectedType == 'percent') {
+                  final raw = double.tryParse(controller.text.trim().replaceAll(',', '.')) ?? 0;
+                  setState(() {
+                    tab.discountType = 'percent';
+                    tab.discountValue = raw.clamp(0, 100).toDouble();
+                  });
+                } else {
+                  final raw = parseVndPrice(controller.text) ?? 0;
+                  setState(() {
+                    tab.discountType = 'amount';
+                    tab.discountValue = raw.clamp(0, _subtotal).toDouble();
+                  });
+                }
+                Navigator.pop(ctx);
+              },
+              child: const Text('Áp dụng'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
-          FilledButton(
-            onPressed: () {
-              final val = parseVndPrice(controller.text) ?? 0;
-              setState(() => tab.discountAmount = val.clamp(0, _subtotal));
-              Navigator.pop(ctx);
-            },
-            child: const Text('Áp dụng'),
-          ),
-        ],
       ),
     );
   }
@@ -827,62 +916,33 @@ class _SalesScreenState extends State<SalesScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          TextField(
+                            controller: _customerController,
+                            decoration: const InputDecoration(
+                              labelText: 'Tên khách hàng',
+                              hintText: 'Nhập tên khách (tuỳ chọn)',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
                           _buildSummaryRow('Tổng tiền hàng', '$_payableLinesCount sp', _formatCompact.format(_subtotal)),
                           const SizedBox(height: 8),
                           InkWell(
                             onTap: _subtotal > 0 ? _showDiscountDialog : null,
-                            child: _buildSummaryRow('Giảm giá', '', '- ${_formatCompact.format(_discountAmount)}', highlight: _discountAmount > 0),
+                            child: _buildSummaryRow(
+                              _discountType == 'percent' ? 'Giảm giá (%)' : 'Giảm giá',
+                              '',
+                              _discountDisplayText,
+                              highlight: _discountAmount > 0,
+                            ),
                           ),
                           const Divider(height: 24),
                           _buildSummaryRow('Khách cần trả', '', _formatCompact.format(_amountDue), bold: true, color: const Color(0xFF1565C0)),
                           const SizedBox(height: 12),
-                          Text('Khách thanh toán', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
-                          const SizedBox(height: 4),
-                          TextField(
-                            controller: _tenderController,
-                            keyboardType: TextInputType.number,
-                            onChanged: (_) => setState(() {}),
-                            decoration: InputDecoration(
-                              hintText: _formatCompact.format(_amountDue),
-                              border: const OutlineInputBorder(),
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Wrap(
-                            runSpacing: 8,
-                            spacing: 8,
-                            children: [
-                              _amountDue,
-                              _amountDue + 1000,
-                              _amountDue + 5000,
-                              150000.0,
-                              200000.0,
-                              500000.0,
-                            ].map((v) => _QuickTenderBtn(amount: v, onTap: () => _setQuickTender(v))).toList(),
-                          ),
                           const SizedBox(height: 16),
                           Text('Phương thức', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
                           const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            children: [
-                              _PaymentChip(
-                                  label: 'Tiền mặt',
-                                  value: 'cash',
-                                  groupValue: _paymentMethod,
-                                  onSelected: (v) => setState(() => _paymentMethod = v!)),
-                              _PaymentChip(
-                                  label: 'Chuyển khoản',
-                                  value: 'transfer',
-                                  groupValue: _paymentMethod,
-                                  onSelected: (v) => setState(() => _paymentMethod = v!)),
-                              _PaymentChip(
-                                  label: 'Thẻ', value: 'card', groupValue: _paymentMethod, onSelected: (v) => setState(() => _paymentMethod = v!)),
-                              _PaymentChip(
-                                  label: 'Ví', value: 'wallet', groupValue: _paymentMethod, onSelected: (v) => setState(() => _paymentMethod = v!)),
-                            ],
-                          ),
                         ],
                       ),
                     ),
@@ -896,7 +956,8 @@ class _SalesScreenState extends State<SalesScreen> {
                                 ? () async {
                                     final payable = _cart.where((i) => i.quantity > 0).toList();
                                     final subtotal = payable.fold(0.0, (s, i) => s + i.total);
-                                    final discount = _tabs[_activeTabIndex].discountAmount;
+                                    final tab = _tabs[_activeTabIndex];
+                                    final discount = _calculateDiscountAmount(tab, subtotal);
                                     final total = (subtotal - discount).clamp(0.0, double.infinity).toDouble();
                                     await PrintService.printInvoice(
                                       context: context,
@@ -904,6 +965,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                       subtotal: subtotal,
                                       discountAmount: discount,
                                       total: total,
+                                      customerName: tab.customerController.text.trim().isEmpty ? null : tab.customerController.text.trim(),
                                     );
                                   }
                                 : null,
@@ -996,12 +1058,20 @@ class _SalesScreenState extends State<SalesScreen> {
             // Mã SP
             Expanded(
               flex: 2,
-              child: Text(item.productCode, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+              child: SelectableText(
+                item.productCode,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                maxLines: 1,
+              ),
             ),
             // Tên hàng
             Expanded(
               flex: 3,
-              child: Text(item.productName, style: const TextStyle(fontSize: 13), maxLines: 2, overflow: TextOverflow.ellipsis),
+              child: SelectableText(
+                item.productName,
+                style: const TextStyle(fontSize: 13),
+                maxLines: 2,
+              ),
             ),
             // ĐVT
             SizedBox(
@@ -1145,9 +1215,10 @@ class _ProductSearchTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Text(
+                    SelectableText(
                       '${formatCompact.format(product.price)} • ${product.code}',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      maxLines: 1,
                     ),
                     const SizedBox(height: 2),
                     Text(

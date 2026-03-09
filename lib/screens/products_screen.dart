@@ -250,18 +250,22 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                     vertical: 8,
                                   ),
                                   leading: _ProductLeading(product: product),
-                                  title: Text(
+                                  title: SelectableText(
                                     product.name,
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w600,
                                       fontSize: 16,
                                     ),
+                                    maxLines: 2,
                                   ),
                                   subtitle: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       const SizedBox(height: 4),
-                                      Text('Mã: ${product.code} | Tồn: ${product.stock} ${product.unit}'),
+                                      SelectableText(
+                                        'Mã: ${product.code} | Tồn: ${product.stock} ${product.unit}',
+                                        maxLines: 1,
+                                      ),
                                       Text(
                                         _formatCurrency.format(product.price),
                                         style: const TextStyle(

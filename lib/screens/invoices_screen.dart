@@ -131,6 +131,8 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                               if (inv.discountAmount > 0)
                                 _buildRow('Giảm giá:',
                                     '- ${_formatCurrency.format(inv.discountAmount)}'),
+                              if (inv.customerName != null && inv.customerName!.trim().isNotEmpty)
+                                _buildRow('Khách hàng:', inv.customerName!.trim()),
                               _buildRow('Tổng cộng:',
                                   _formatCurrency.format(inv.total),
                                   bold: true),
@@ -147,6 +149,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                                       total: inv.total,
                                       invoiceId: inv.id,
                                       createdAt: inv.createdAt,
+                                      customerName: inv.customerName,
                                     );
                                   },
                                   icon: const Icon(Icons.print),
