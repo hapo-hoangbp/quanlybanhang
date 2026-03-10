@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/sale_item.dart';
+import 'storage_service.dart';
 
 class PrintService {
   static final _fmt = NumberFormat('#,###', 'vi_VN');
@@ -43,7 +44,16 @@ class PrintService {
     String shopName = 'Tạp Hoá Hoàng Dung',
     String shopPhone = defaultShopPhone,
     String shopAddress = defaultShopAddress,
+    String? paymentQrData,
+    String? paymentQrLabel,
+    String? paymentQrImageUrl,
   }) async {
+    final resolvedQr = _resolvePaymentQr(
+      total: total,
+      paymentQrData: paymentQrData,
+      paymentQrLabel: paymentQrLabel,
+      paymentQrImageUrl: paymentQrImageUrl,
+    );
     await Printing.layoutPdf(
       name: 'Hoa_don_${invoiceId ?? ''}',
       onLayout: (_) async => _buildPdf(
@@ -57,8 +67,46 @@ class PrintService {
         shopName: shopName,
         shopPhone: shopPhone,
         shopAddress: shopAddress,
+        paymentQrData: resolvedQr.$1,
+        paymentQrLabel: resolvedQr.$2,
+        paymentQrImageUrl: resolvedQr.$3,
       ),
     );
+  }
+
+  static (String?, String?, String?) _resolvePaymentQr({
+    required double total,
+    String? paymentQrData,
+    String? paymentQrLabel,
+    String? paymentQrImageUrl,
+  }) {
+    final directData = paymentQrData?.trim() ?? '';
+    final directImageUrl = paymentQrImageUrl?.trim() ?? '';
+    if (directData.isNotEmpty) {
+      return (directData, paymentQrLabel?.trim(), directImageUrl.isEmpty ? null : directImageUrl);
+    }
+
+    final profiles = StorageService.getBankQrProfiles();
+    if (profiles.isEmpty) return (null, null, null);
+    final defaultId = StorageService.getDefaultBankQrId();
+    final selected = profiles.where((e) => (e['id'] ?? '').toString() == defaultId).firstOrNull;
+    final fallback = selected ?? profiles.first;
+    final bankCode = (fallback['bankCode'] ?? '').toString().trim();
+    final accountNumber = (fallback['accountNumber'] ?? '').toString().trim();
+    final label = (fallback['name'] ?? '').toString().trim();
+    if (bankCode.isNotEmpty && accountNumber.isNotEmpty) {
+      final amountValue = total.round().clamp(0, 999999999);
+      final accountName = Uri.encodeComponent((fallback['accountName'] ?? '').toString().trim());
+      final accountPart = accountName.isEmpty ? '' : '&accountName=$accountName';
+      final imageUrl =
+          'https://img.vietqr.io/image/$bankCode-$accountNumber-compact2.png?amount=$amountValue&addInfo=Thanh%20toan%20hoa%20don$accountPart';
+      return (null, label.isEmpty ? null : label, imageUrl);
+    }
+    final template = (fallback['qrTemplate'] ?? '').toString().trim();
+    if (template.isEmpty) return (null, null, null);
+    final amountValue = total.round().clamp(0, 999999999);
+    final qrData = template.replaceAll('{amount}', amountValue.toString());
+    return (qrData, label.isEmpty ? null : label, null);
   }
 
   static Future<Uint8List> _buildPdf({
@@ -72,12 +120,24 @@ class PrintService {
     required String shopName,
     required String shopPhone,
     required String shopAddress,
+    String? paymentQrData,
+    String? paymentQrLabel,
+    String? paymentQrImageUrl,
   }) async {
     final doc = pw.Document();
     // Arial Unicode MS — font Unicode đầy đủ, hỗ trợ tiếng Việt
     final fontData = await rootBundle.load('assets/fonts/ArialUnicode.ttf');
     final font = pw.Font.ttf(fontData);
     final fontBold = font; // dùng chung, Arial Unicode chỉ có 1 weight
+    pw.MemoryImage? paymentQrImage;
+    if (paymentQrImageUrl != null && paymentQrImageUrl.trim().isNotEmpty) {
+      try {
+        final imageBytes = await NetworkAssetBundle(Uri.parse(paymentQrImageUrl.trim())).load(paymentQrImageUrl.trim());
+        paymentQrImage = pw.MemoryImage(imageBytes.buffer.asUint8List());
+      } catch (_) {
+        paymentQrImage = null;
+      }
+    }
 
     doc.addPage(
       pw.Page(
@@ -223,6 +283,28 @@ class PrintService {
               if (discountAmount > 0) _summaryRow('Giảm giá', '- ${_fmt.format(discountAmount)}', font: font, fontBold: font),
               pw.Divider(thickness: 0.5),
               _summaryRow('TỔNG THANH TOÁN', '${_fmt.format(total)} đ', font: fontBold, fontBold: fontBold, large: true),
+              if ((paymentQrImage != null) || (paymentQrData != null && paymentQrData.trim().isNotEmpty)) ...[
+                pw.SizedBox(height: 8),
+                pw.Center(
+                  child: pw.Text(
+                    paymentQrLabel?.trim().isNotEmpty == true
+                        ? 'Quét QR thanh toán (${paymentQrLabel!.trim()})'
+                        : 'Quét QR thanh toán',
+                    style: pw.TextStyle(font: fontBold, fontSize: 9),
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Center(
+                  child: paymentQrImage != null
+                      ? pw.Image(paymentQrImage, width: 100, height: 100)
+                      : pw.BarcodeWidget(
+                          barcode: pw.Barcode.qrCode(),
+                          data: paymentQrData!.trim(),
+                          width: 100,
+                          height: 100,
+                        ),
+                ),
+              ],
 
               pw.SizedBox(height: 12),
               pw.Center(

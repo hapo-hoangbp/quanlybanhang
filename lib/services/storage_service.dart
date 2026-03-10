@@ -9,6 +9,8 @@ import '../models/invoice.dart';
 class StorageService {
   static const String _productsBox = 'products';
   static const String _invoicesBox = 'invoices';
+  static const String _bankQrProfilesKey = 'bank_qr_profiles';
+  static const String _defaultBankQrIdKey = 'default_bank_qr_id';
 
   static Box? _productsBoxInstance;
   static Box? _invoicesBoxInstance;
@@ -160,6 +162,34 @@ class StorageService {
       product.stock = (product.stock - quantitySold).clamp(0, 999999);
       await updateProduct(product);
     }
+  }
+
+  // Bank QR profiles
+  static List<Map<String, dynamic>> getBankQrProfiles() {
+    final box = _productsBoxRef;
+    final list = box.get(_bankQrProfilesKey, defaultValue: <Map>[]) as List;
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<void> saveBankQrProfiles(List<Map<String, dynamic>> profiles) async {
+    final box = _productsBoxRef;
+    await box.put(_bankQrProfilesKey, profiles);
+  }
+
+  static String? getDefaultBankQrId() {
+    final box = _productsBoxRef;
+    final value = box.get(_defaultBankQrIdKey);
+    if (value is String && value.trim().isNotEmpty) return value;
+    return null;
+  }
+
+  static Future<void> setDefaultBankQrId(String? id) async {
+    final box = _productsBoxRef;
+    if (id == null || id.trim().isEmpty) {
+      await box.delete(_defaultBankQrIdKey);
+      return;
+    }
+    await box.put(_defaultBankQrIdKey, id.trim());
   }
 
   static String _normalizeCode(String value) {

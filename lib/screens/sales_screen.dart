@@ -36,10 +36,81 @@ class _InvoiceTabData {
         discountType = 'amount',
         customerController = TextEditingController(),
         tenderController = TextEditingController(),
-        paymentMethod = 'cash';
+        paymentMethod = 'bank';
+}
+
+class _BankQrProfile {
+  final String id;
+  final String name;
+  final String qrTemplate;
+  final String? bankCode;
+  final String? bankName;
+  final String? accountNumber;
+  final String? accountName;
+
+  const _BankQrProfile({
+    required this.id,
+    required this.name,
+    required this.qrTemplate,
+    this.bankCode,
+    this.bankName,
+    this.accountNumber,
+    this.accountName,
+  });
+
+  factory _BankQrProfile.fromMap(Map<String, dynamic> map) {
+    return _BankQrProfile(
+      id: (map['id'] ?? '').toString(),
+      name: (map['name'] ?? '').toString(),
+      qrTemplate: (map['qrTemplate'] ?? '').toString(),
+      bankCode: map['bankCode']?.toString(),
+      bankName: map['bankName']?.toString(),
+      accountNumber: map['accountNumber']?.toString(),
+      accountName: map['accountName']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'qrTemplate': qrTemplate,
+      'bankCode': bankCode,
+      'bankName': bankName,
+      'accountNumber': accountNumber,
+      'accountName': accountName,
+    };
+  }
+}
+
+class _VietnamBank {
+  final String code;
+  final String name;
+
+  const _VietnamBank({required this.code, required this.name});
 }
 
 class _SalesScreenState extends State<SalesScreen> {
+  static const List<_VietnamBank> _vietnamBanks = [
+    _VietnamBank(code: 'vietcombank', name: 'Vietcombank'),
+    _VietnamBank(code: 'vietinbank', name: 'VietinBank'),
+    _VietnamBank(code: 'bidv', name: 'BIDV'),
+    _VietnamBank(code: 'agribank', name: 'Agribank'),
+    _VietnamBank(code: 'mbbank', name: 'MB Bank'),
+    _VietnamBank(code: 'acb', name: 'ACB'),
+    _VietnamBank(code: 'techcombank', name: 'Techcombank'),
+    _VietnamBank(code: 'vpbank', name: 'VPBank'),
+    _VietnamBank(code: 'tpbank', name: 'TPBank'),
+    _VietnamBank(code: 'sacombank', name: 'Sacombank'),
+    _VietnamBank(code: 'hdbank', name: 'HDBank'),
+    _VietnamBank(code: 'ocb', name: 'OCB'),
+    _VietnamBank(code: 'seabank', name: 'SeABank'),
+    _VietnamBank(code: 'vib', name: 'VIB'),
+    _VietnamBank(code: 'shb', name: 'SHB'),
+    _VietnamBank(code: 'msb', name: 'MSB'),
+    _VietnamBank(code: 'eximbank', name: 'Eximbank'),
+  ];
+
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   final _tabScrollController = ScrollController();
@@ -56,11 +127,14 @@ class _SalesScreenState extends State<SalesScreen> {
   final _formatCompact = NumberFormat('#,###', 'vi_VN');
   bool _isAddingBySearch = false;
   DateTime? _lastAddBySearchAt;
+  bool _skipNextExactMatchAutoAdd = false;
+  List<_BankQrProfile> _bankQrProfiles = [];
+  String? _defaultBankQrId;
+  String? _selectedBankQrId;
 
   List<SaleItem> get _cart => _tabs.isNotEmpty ? _tabs[_activeTabIndex].cart : [];
   TextEditingController get _customerController => _tabs.isNotEmpty ? _tabs[_activeTabIndex].customerController : TextEditingController();
-  double get _discountAmount =>
-      _tabs.isNotEmpty ? _calculateDiscountAmount(_tabs[_activeTabIndex], _subtotal) : 0;
+  double get _discountAmount => _tabs.isNotEmpty ? _calculateDiscountAmount(_tabs[_activeTabIndex], _subtotal) : 0;
   String get _discountType => _tabs.isNotEmpty ? _tabs[_activeTabIndex].discountType : 'amount';
   double get _discountValue => _tabs.isNotEmpty ? _tabs[_activeTabIndex].discountValue : 0;
   String get _discountDisplayText {
@@ -72,9 +146,20 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   TextEditingController get _tenderController => _tabs.isNotEmpty ? _tabs[_activeTabIndex].tenderController : TextEditingController();
-  String get _paymentMethod => _tabs.isNotEmpty ? _tabs[_activeTabIndex].paymentMethod : 'cash';
+  String get _paymentMethod => _tabs.isNotEmpty ? _tabs[_activeTabIndex].paymentMethod : 'bank';
   set _paymentMethod(String v) {
     if (_tabs.isNotEmpty) _tabs[_activeTabIndex].paymentMethod = v;
+  }
+
+  _BankQrProfile? get _activeBankQrProfile {
+    final selected = _bankQrProfiles.where((e) => e.id == _selectedBankQrId).firstOrNull;
+    if (selected != null) return selected;
+    return _bankQrProfiles.where((e) => e.id == _defaultBankQrId).firstOrNull;
+  }
+
+  _VietnamBank? _findBankByCode(String? code) {
+    if (code == null || code.trim().isEmpty) return null;
+    return _vietnamBanks.where((e) => e.code == code).firstOrNull;
   }
 
   @override
@@ -82,6 +167,7 @@ class _SalesScreenState extends State<SalesScreen> {
     super.initState();
     _tabs.add(_InvoiceTabData(id: 'tab_1', cart: []));
     _loadProducts();
+    _loadBankQrProfiles();
     _searchController.addListener(_filterProducts);
   }
 
@@ -90,6 +176,7 @@ class _SalesScreenState extends State<SalesScreen> {
     super.didUpdateWidget(oldWidget);
     if (widget.isActive && !oldWidget.isActive) {
       _loadProducts();
+      _loadBankQrProfiles();
     }
   }
 
@@ -124,18 +211,20 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _closeTab(int index) async {
-    if (_tabs.length <= 1) return;
     final tab = _tabs[index];
     final hasItems = tab.cart.isNotEmpty;
+    final isSingleTab = _tabs.length <= 1;
     final closed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('Đóng hóa đơn'),
+        title: Text(isSingleTab ? 'Xóa giỏ hàng' : 'Đóng hóa đơn'),
         content: Text(
           hasItems
-              ? 'Hóa đơn ${index + 1} còn ${tab.cart.length} mặt hàng chưa thanh toán. Đóng hóa đơn sẽ xóa toàn bộ. Bạn có chắc?'
-              : 'Bạn có chắc muốn đóng Hóa đơn ${index + 1}?',
+              ? (isSingleTab
+                  ? 'Giỏ hàng hiện có ${tab.cart.length} mặt hàng. Bạn có chắc muốn xóa toàn bộ?'
+                  : 'Hóa đơn ${index + 1} còn ${tab.cart.length} mặt hàng chưa thanh toán. Đóng hóa đơn sẽ xóa toàn bộ. Bạn có chắc?')
+              : (isSingleTab ? 'Giỏ hàng đang trống. Bạn có muốn làm mới hóa đơn này?' : 'Bạn có chắc muốn đóng Hóa đơn ${index + 1}?'),
         ),
         actions: [
           TextButton(
@@ -145,18 +234,27 @@ class _SalesScreenState extends State<SalesScreen> {
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Đóng'),
+            child: Text(isSingleTab ? 'Xóa hết' : 'Đóng'),
           ),
         ],
       ),
     );
     if (closed != true || !mounted) return;
     setState(() {
-      tab.customerController.dispose();
-      tab.tenderController.dispose();
-      _tabs.removeAt(index);
-      if (_activeTabIndex >= _tabs.length) _activeTabIndex = _tabs.length - 1;
-      if (_activeTabIndex > index) _activeTabIndex--;
+      if (isSingleTab) {
+        tab.cart.clear();
+        tab.discountType = 'amount';
+        tab.discountValue = 0;
+        tab.customerController.clear();
+        tab.tenderController.clear();
+        tab.paymentMethod = 'bank';
+      } else {
+        tab.customerController.dispose();
+        tab.tenderController.dispose();
+        _tabs.removeAt(index);
+        if (_activeTabIndex >= _tabs.length) _activeTabIndex = _tabs.length - 1;
+        if (_activeTabIndex > index) _activeTabIndex--;
+      }
     });
   }
 
@@ -169,6 +267,184 @@ class _SalesScreenState extends State<SalesScreen> {
       _products = StorageService.getProducts();
       _filterProducts();
     });
+  }
+
+  void _loadBankQrProfiles() {
+    final maps = StorageService.getBankQrProfiles();
+    final profiles = maps.map(_BankQrProfile.fromMap).where((e) => e.id.trim().isNotEmpty && e.name.trim().isNotEmpty).toList();
+    final defaultId = StorageService.getDefaultBankQrId();
+    String? selectedId = _selectedBankQrId;
+    if (selectedId != null && profiles.every((e) => e.id != selectedId)) {
+      selectedId = null;
+    }
+    if (selectedId == null && defaultId != null && profiles.any((e) => e.id == defaultId)) {
+      selectedId = defaultId;
+    }
+    setState(() {
+      _bankQrProfiles = profiles;
+      _defaultBankQrId = defaultId;
+      _selectedBankQrId = selectedId;
+    });
+  }
+
+  String _buildPaymentQrData(String qrTemplate, double amount) {
+    final amountValue = amount.round().clamp(0, 999999999);
+    return qrTemplate.replaceAll('{amount}', amountValue.toString());
+  }
+
+  String? _buildVietQrImageUrl(_BankQrProfile profile, double amount) {
+    final bankCode = profile.bankCode?.trim() ?? '';
+    final accountNumber = profile.accountNumber?.trim() ?? '';
+    if (bankCode.isEmpty || accountNumber.isEmpty) return null;
+    final amountValue = amount.round().clamp(0, 999999999);
+    final addInfo = Uri.encodeComponent('Thanh toan hoa don');
+    final accountName = Uri.encodeComponent((profile.accountName ?? '').trim());
+    final accountPart = accountName.isEmpty ? '' : '&accountName=$accountName';
+    return 'https://img.vietqr.io/image/$bankCode-$accountNumber-compact2.png?amount=$amountValue&addInfo=$addInfo$accountPart';
+  }
+
+  Future<void> _saveBankQrProfiles() async {
+    await StorageService.saveBankQrProfiles(_bankQrProfiles.map((e) => e.toMap()).toList());
+    await StorageService.setDefaultBankQrId(_defaultBankQrId);
+  }
+
+  Future<void> _showBankQrDialog({_BankQrProfile? editing}) async {
+    final accountController = TextEditingController(text: editing?.accountNumber ?? '');
+    String? selectedBankCode = editing?.bankCode;
+    final formKey = GlobalKey<FormState>();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => AlertDialog(
+          title: Text(editing == null ? 'Thêm tài khoản ngân hàng' : 'Sửa tài khoản ngân hàng'),
+          content: SizedBox(
+            width: 420,
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedBankCode,
+                    decoration: const InputDecoration(
+                      labelText: 'Ngân hàng',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _vietnamBanks
+                        .map(
+                          (e) => DropdownMenuItem<String>(
+                            value: e.code,
+                            child: Text(e.name, overflow: TextOverflow.ellipsis),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setStateDialog(() => selectedBankCode = value),
+                    validator: (v) => (v == null || v.isEmpty) ? 'Chọn ngân hàng' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: accountController,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      labelText: 'Số tài khoản',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Nhập số tài khoản' : null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.of(ctx).pop(true);
+              },
+              child: const Text('Lưu'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+
+    final bank = _findBankByCode(selectedBankCode);
+    final bankCode = selectedBankCode?.trim() ?? '';
+    final bankName = bank?.name ?? '';
+    final accountNumber = accountController.text.trim();
+    final name = '$bankName - $accountNumber';
+    final qrTemplate = editing?.qrTemplate ?? '';
+    setState(() {
+      if (editing == null) {
+        final profile = _BankQrProfile(
+          id: const Uuid().v4(),
+          name: name,
+          qrTemplate: qrTemplate,
+          bankCode: bankCode,
+          bankName: bankName,
+          accountNumber: accountNumber,
+          accountName: editing?.accountName,
+        );
+        _bankQrProfiles.add(profile);
+        _selectedBankQrId = profile.id;
+        _defaultBankQrId ??= profile.id;
+      } else {
+        final idx = _bankQrProfiles.indexWhere((e) => e.id == editing.id);
+        if (idx >= 0) {
+          _bankQrProfiles[idx] = _BankQrProfile(
+            id: editing.id,
+            name: name,
+            qrTemplate: qrTemplate,
+            bankCode: bankCode,
+            bankName: bankName,
+            accountNumber: accountNumber,
+            accountName: editing.accountName,
+          );
+          _selectedBankQrId = editing.id;
+        }
+      }
+    });
+    await _saveBankQrProfiles();
+  }
+
+  Future<void> _deleteSelectedBankQr() async {
+    final selected = _activeBankQrProfile;
+    if (selected == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xóa mã QR'),
+        content: Text('Bạn có chắc muốn xóa "${selected.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Xóa'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _bankQrProfiles.removeWhere((e) => e.id == selected.id);
+      if (_defaultBankQrId == selected.id) {
+        _defaultBankQrId = _bankQrProfiles.isNotEmpty ? _bankQrProfiles.first.id : null;
+      }
+      _selectedBankQrId =
+          _bankQrProfiles.any((e) => e.id == _selectedBankQrId) ? _selectedBankQrId : (_bankQrProfiles.isNotEmpty ? _bankQrProfiles.first.id : null);
+    });
+    await _saveBankQrProfiles();
   }
 
   void _filterProducts() {
@@ -184,6 +460,14 @@ class _SalesScreenState extends State<SalesScreen> {
     // nhưng một số máy không gửi Enter — kiểm tra sau mỗi ký tự).
     final exactMatch = _products.where((p) => p.code.toLowerCase() == queryLower).toList();
     if (exactMatch.length == 1) {
+      if (_skipNextExactMatchAutoAdd) {
+        _skipNextExactMatchAutoAdd = false;
+        setState(() {
+          _filteredProducts = List.from(_products);
+          _searchFocusIndex = -1;
+        });
+        return;
+      }
       // Tìm đúng 1 sản phẩm theo mã → thêm ngay vào giỏ, không hiện dropdown.
       Future.microtask(() {
         if (!mounted) return;
@@ -226,9 +510,9 @@ class _SalesScreenState extends State<SalesScreen> {
     if (existing != null) {
       final requested = existing.quantity + qty;
       final newQty = requested.clamp(0, maxQty);
-
-      final idx = _cart.indexOf(existing);
-      _cart[idx] = existing.copyWith(quantity: newQty);
+      final updated = existing.copyWith(quantity: newQty);
+      _cart.removeWhere((i) => i.productId == product.id);
+      _cart.insert(0, updated);
     } else {
       _cart.insert(
           0,
@@ -333,6 +617,7 @@ class _SalesScreenState extends State<SalesScreen> {
       return;
     }
 
+    _skipNextExactMatchAutoAdd = true;
     _loadProducts();
     setState(() {
       _upsertCartItem(created, qty: 1);
@@ -351,8 +636,7 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _addBySearch() async {
     final now = DateTime.now();
-    if (_lastAddBySearchAt != null &&
-        now.difference(_lastAddBySearchAt!).inMilliseconds < 300) {
+    if (_lastAddBySearchAt != null && now.difference(_lastAddBySearchAt!).inMilliseconds < 300) {
       return;
     }
     if (_isAddingBySearch) return;
@@ -605,6 +889,7 @@ class _SalesScreenState extends State<SalesScreen> {
     );
 
     if (shouldPrint == true && mounted) {
+      final qrProfile = _activeBankQrProfile;
       await PrintService.printInvoice(
         context: context,
         items: items,
@@ -614,6 +899,9 @@ class _SalesScreenState extends State<SalesScreen> {
         invoiceId: invoice.id,
         createdAt: invoice.createdAt,
         customerName: invoice.customerName,
+        paymentQrData: qrProfile == null ? null : (qrProfile.qrTemplate.trim().isEmpty ? null : _buildPaymentQrData(qrProfile.qrTemplate, total)),
+        paymentQrLabel: qrProfile?.name,
+        paymentQrImageUrl: qrProfile == null ? null : _buildVietQrImageUrl(qrProfile, total),
       );
     }
   }
@@ -782,7 +1070,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                     label: 'Hóa đơn ${i + 1}',
                                     isActive: i == _activeTabIndex,
                                     onTap: () => _switchTab(i),
-                                    onClose: _tabs.length > 1 ? () => _closeTab(i) : null,
+                                    onClose: () => _closeTab(i),
                                   ),
                                 )),
                       ],
@@ -957,6 +1245,85 @@ class _SalesScreenState extends State<SalesScreen> {
                           const SizedBox(height: 16),
                           Text('Phương thức', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
                           const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _PaymentChip(
+                                  label: 'Tiền mặt',
+                                  value: 'cash',
+                                  groupValue: _paymentMethod,
+                                  onSelected: (v) => setState(() => _paymentMethod = v ?? 'cash'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _PaymentChip(
+                                  label: 'Chuyển khoản',
+                                  value: 'bank',
+                                  groupValue: _paymentMethod,
+                                  onSelected: (v) => setState(() => _paymentMethod = v ?? 'cash'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_paymentMethod == 'bank') ...[
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              value: _activeBankQrProfile?.id,
+                              decoration: const InputDecoration(
+                                labelText: 'Mã QR ngân hàng',
+                                border: OutlineInputBorder(),
+                              ),
+                              hint: const Text('Chọn mã QR để in theo hóa đơn'),
+                              items: _bankQrProfiles
+                                  .map(
+                                    (e) => DropdownMenuItem<String>(
+                                      value: e.id,
+                                      child: Text(
+                                        '${e.bankName ?? ''} - ${e.accountNumber ?? ''}',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                setState(() => _selectedBankQrId = value);
+                              },
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Khi in hóa đơn sẽ tự render QR ngân hàng kèm số tiền khách cần thanh toán.',
+                              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _showBankQrDialog(),
+                                    icon: const Icon(Icons.add, size: 16),
+                                    label: const Text('Thêm'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _activeBankQrProfile == null ? null : () => _showBankQrDialog(editing: _activeBankQrProfile),
+                                    icon: const Icon(Icons.edit, size: 16),
+                                    label: const Text('Sửa'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _activeBankQrProfile == null ? null : _deleteSelectedBankQr,
+                                    icon: const Icon(Icons.delete_outline, size: 16),
+                                    label: const Text('Xóa'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -973,6 +1340,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                     final tab = _tabs[_activeTabIndex];
                                     final discount = _calculateDiscountAmount(tab, subtotal);
                                     final total = (subtotal - discount).clamp(0.0, double.infinity).toDouble();
+                                    final qrProfile = _activeBankQrProfile;
                                     await PrintService.printInvoice(
                                       context: context,
                                       items: payable,
@@ -980,6 +1348,11 @@ class _SalesScreenState extends State<SalesScreen> {
                                       discountAmount: discount,
                                       total: total,
                                       customerName: tab.customerController.text.trim().isEmpty ? null : tab.customerController.text.trim(),
+                                      paymentQrData: qrProfile == null
+                                          ? null
+                                          : (qrProfile.qrTemplate.trim().isEmpty ? null : _buildPaymentQrData(qrProfile.qrTemplate, total)),
+                                      paymentQrLabel: qrProfile?.name,
+                                      paymentQrImageUrl: qrProfile == null ? null : _buildVietQrImageUrl(qrProfile, total),
                                     );
                                   }
                                 : null,
@@ -1105,8 +1478,11 @@ class _SalesScreenState extends State<SalesScreen> {
                     constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
                   ),
                   SizedBox(
-                    width: 38,
-                    child: Text('${item.quantity}', textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    width: 44,
+                    child: _QtyInput(
+                      value: item.quantity,
+                      onSubmitted: (newQty) => _updateCartItem(item, newQty),
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.add, size: 16),
@@ -1281,6 +1657,84 @@ class _QuickTenderBtn extends StatelessWidget {
           child: Text(fmt.format(amount.toInt()), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
         ),
       ),
+    );
+  }
+}
+
+class _QtyInput extends StatefulWidget {
+  final int value;
+  final ValueChanged<int> onSubmitted;
+
+  const _QtyInput({
+    required this.value,
+    required this.onSubmitted,
+  });
+
+  @override
+  State<_QtyInput> createState() => _QtyInputState();
+}
+
+class _QtyInputState extends State<_QtyInput> {
+  late final TextEditingController _controller;
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: '${widget.value}');
+  }
+
+  @override
+  void didUpdateWidget(covariant _QtyInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_focusNode.hasFocus && oldWidget.value != widget.value) {
+      _controller.text = '${widget.value}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _applyValue(String raw) {
+    final parsed = int.tryParse(raw.trim());
+    if (parsed == null) {
+      _controller.text = '${widget.value}';
+      return;
+    }
+    final clamped = parsed.clamp(0, 999999);
+    _controller.text = '$clamped';
+    widget.onSubmitted(clamped);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      focusNode: _focusNode,
+      keyboardType: TextInputType.number,
+      textAlign: TextAlign.center,
+      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
+      ),
+      onTap: () => _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _controller.text.length,
+      ),
+      onSubmitted: _applyValue,
+      onTapOutside: (_) {
+        _applyValue(_controller.text);
+        _focusNode.unfocus();
+      },
     );
   }
 }
