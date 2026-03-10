@@ -113,6 +113,7 @@ class _SalesScreenState extends State<SalesScreen> {
 
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  final _searchKeyListenerFocusNode = FocusNode(skipTraversal: true);
   final _tabScrollController = ScrollController();
   final _searchDropdownScrollController = ScrollController();
   final _cartScrollKey = GlobalKey();
@@ -184,6 +185,7 @@ class _SalesScreenState extends State<SalesScreen> {
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _searchKeyListenerFocusNode.dispose();
     _tabScrollController.dispose();
     _searchDropdownScrollController.dispose();
     for (final t in _tabs) {
@@ -301,6 +303,15 @@ class _SalesScreenState extends State<SalesScreen> {
     final accountName = Uri.encodeComponent((profile.accountName ?? '').trim());
     final accountPart = accountName.isEmpty ? '' : '&accountName=$accountName';
     return 'https://img.vietqr.io/image/$bankCode-$accountNumber-compact2.png?amount=$amountValue&addInfo=$addInfo$accountPart';
+  }
+
+  String? _buildVietQrPreviewUrl(_BankQrProfile profile) {
+    final bankCode = profile.bankCode?.trim() ?? '';
+    final accountNumber = profile.accountNumber?.trim() ?? '';
+    if (bankCode.isEmpty || accountNumber.isEmpty) return null;
+    final accountName = Uri.encodeComponent((profile.accountName ?? '').trim());
+    final accountPart = accountName.isEmpty ? '' : '?accountName=$accountName';
+    return 'https://img.vietqr.io/image/$bankCode-$accountNumber-compact2.png$accountPart';
   }
 
   Future<void> _saveBankQrProfiles() async {
@@ -581,9 +592,13 @@ class _SalesScreenState extends State<SalesScreen> {
   void _focusSearchForNextScan() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!_searchFocusNode.hasFocus) {
-        _searchFocusNode.requestFocus();
-      }
+      if (!_searchFocusNode.hasFocus) _searchFocusNode.requestFocus();
+      // Một số máy quét gửi Enter + ký tự kết thúc làm TextField mất focus muộn.
+      // Re-focus thêm 1 nhịp ngắn để giữ ô quét luôn sẵn sàng.
+      Future.delayed(const Duration(milliseconds: 80), () {
+        if (!mounted) return;
+        if (!_searchFocusNode.hasFocus) _searchFocusNode.requestFocus();
+      });
     });
   }
 
@@ -1026,7 +1041,7 @@ class _SalesScreenState extends State<SalesScreen> {
                 SizedBox(
                   width: searchW,
                   child: KeyboardListener(
-                    focusNode: FocusNode(skipTraversal: true),
+                    focusNode: _searchKeyListenerFocusNode,
                     onKeyEvent: _handleSearchKey,
                     child: TextField(
                       controller: _searchController,
@@ -1323,6 +1338,31 @@ class _SalesScreenState extends State<SalesScreen> {
                                 ),
                               ],
                             ),
+                            if (_activeBankQrProfile != null) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                'Mã QR thanh toán',
+                                style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 8),
+                              Center(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    width: 160,
+                                    height: 160,
+                                    color: Colors.grey[100],
+                                    child: _buildVietQrPreviewUrl(_activeBankQrProfile!) == null
+                                        ? Icon(Icons.qr_code_2, size: 56, color: Colors.grey[400])
+                                        : Image.network(
+                                            _buildVietQrPreviewUrl(_activeBankQrProfile!)!,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) => Icon(Icons.qr_code_2, size: 56, color: Colors.grey[400]),
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ],
                       ),
