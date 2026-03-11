@@ -128,7 +128,10 @@ class _SalesScreenState extends State<SalesScreen> {
   final _formatCompact = NumberFormat('#,###', 'vi_VN');
   bool _isAddingBySearch = false;
   DateTime? _lastAddBySearchAt;
-  bool _skipNextExactMatchAutoAdd = false;
+  bool _ignoreNextSubmitted = false;
+  String? _lastAutoAddedCode;
+  DateTime? _lastAutoAddedAt;
+  String _lastProcessedSearchText = '';
   List<_BankQrProfile> _bankQrProfiles = [];
   String? _defaultBankQrId;
   String? _selectedBankQrId;
@@ -305,15 +308,6 @@ class _SalesScreenState extends State<SalesScreen> {
     return 'https://img.vietqr.io/image/$bankCode-$accountNumber-compact2.png?amount=$amountValue&addInfo=$addInfo$accountPart';
   }
 
-  String? _buildVietQrPreviewUrl(_BankQrProfile profile) {
-    final bankCode = profile.bankCode?.trim() ?? '';
-    final accountNumber = profile.accountNumber?.trim() ?? '';
-    if (bankCode.isEmpty || accountNumber.isEmpty) return null;
-    final accountName = Uri.encodeComponent((profile.accountName ?? '').trim());
-    final accountPart = accountName.isEmpty ? '' : '?accountName=$accountName';
-    return 'https://img.vietqr.io/image/$bankCode-$accountNumber-compact2.png$accountPart';
-  }
-
   Future<void> _saveBankQrProfiles() async {
     await StorageService.saveBankQrProfiles(_bankQrProfiles.map((e) => e.toMap()).toList());
     await StorageService.setDefaultBankQrId(_defaultBankQrId);
@@ -461,30 +455,24 @@ class _SalesScreenState extends State<SalesScreen> {
   void _filterProducts() {
     final query = _searchController.text.trim();
     final queryLower = query.toLowerCase();
+    final textChanged = query != _lastProcessedSearchText;
+    _lastProcessedSearchText = query;
 
     if (query.isEmpty) {
       setState(() => _filteredProducts = List.from(_products));
       return;
     }
 
-    // Khớp chính xác theo mã vạch/mã hàng (máy quét gõ mã rồi Enter,
-    // nhưng một số máy không gửi Enter — kiểm tra sau mỗi ký tự).
+    // Khớp chính xác mã vạch/mã SP thì thêm ngay vào giỏ hàng.
     final exactMatch = _products.where((p) => p.code.toLowerCase() == queryLower).toList();
-    if (exactMatch.length == 1) {
-      if (_skipNextExactMatchAutoAdd) {
-        _skipNextExactMatchAutoAdd = false;
-        setState(() {
-          _filteredProducts = List.from(_products);
-          _searchFocusIndex = -1;
-        });
-        return;
-      }
-      // Tìm đúng 1 sản phẩm theo mã → thêm ngay vào giỏ, không hiện dropdown.
+    if (exactMatch.length == 1 && textChanged) {
       Future.microtask(() {
         if (!mounted) return;
         _upsertCartItem(exactMatch.first, qty: 1);
+        _ignoreNextSubmitted = true;
+        _lastAutoAddedCode = queryLower;
+        _lastAutoAddedAt = DateTime.now();
         setState(() {
-          _searchController.clear();
           _filteredProducts = List.from(_products);
           _showSearchResults = false;
           _searchFocusIndex = -1;
@@ -593,11 +581,23 @@ class _SalesScreenState extends State<SalesScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_searchFocusNode.hasFocus) _searchFocusNode.requestFocus();
+      if (_searchController.text.isNotEmpty) {
+        _searchController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _searchController.text.length,
+        );
+      }
       // Một số máy quét gửi Enter + ký tự kết thúc làm TextField mất focus muộn.
       // Re-focus thêm 1 nhịp ngắn để giữ ô quét luôn sẵn sàng.
       Future.delayed(const Duration(milliseconds: 80), () {
         if (!mounted) return;
         if (!_searchFocusNode.hasFocus) _searchFocusNode.requestFocus();
+        if (_searchController.text.isNotEmpty) {
+          _searchController.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: _searchController.text.length,
+          );
+        }
       });
     });
   }
@@ -607,7 +607,7 @@ class _SalesScreenState extends State<SalesScreen> {
       if (!mounted) return;
       setState(() {
         _upsertCartItem(chosen, qty: 1);
-        _searchController.clear();
+        _searchController.text = chosen.code;
         _showSearchResults = false;
         _searchFocusIndex = -1;
       });
@@ -620,6 +620,16 @@ class _SalesScreenState extends State<SalesScreen> {
     if (q.isEmpty) return;
 
     final exact = _products.where((p) => p.code.toLowerCase() == q.toLowerCase()).firstOrNull;
+    if (exact != null) {
+      setState(() {
+        _upsertCartItem(exact, qty: 1);
+        _showSearchResults = false;
+        _searchFocusIndex = -1;
+      });
+      _focusSearchForNextScan();
+      return;
+    }
+
     final chosen = exact ?? (_filteredProducts.isNotEmpty ? _filteredProducts.first : null);
     if (chosen != null) {
       _selectProductFromSearch(chosen);
@@ -632,13 +642,12 @@ class _SalesScreenState extends State<SalesScreen> {
       return;
     }
 
-    _skipNextExactMatchAutoAdd = true;
     _loadProducts();
     setState(() {
       _upsertCartItem(created, qty: 1);
       _searchFocusIndex = -1;
       _showSearchResults = false;
-      _searchController.clear();
+      _searchController.text = created.code;
     });
     _focusSearchForNextScan();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -650,17 +659,33 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _addBySearch() async {
-    final now = DateTime.now();
-    if (_lastAddBySearchAt != null && now.difference(_lastAddBySearchAt!).inMilliseconds < 300) {
+    final queryLower = _searchController.text.trim().toLowerCase();
+    if (_ignoreNextSubmitted &&
+        _lastAutoAddedCode == queryLower &&
+        _lastAutoAddedAt != null &&
+        DateTime.now().difference(_lastAutoAddedAt!).inMilliseconds < 600) {
+      _ignoreNextSubmitted = false;
+      _focusSearchForNextScan();
       return;
     }
-    if (_isAddingBySearch) return;
+    _ignoreNextSubmitted = false;
+
+    final now = DateTime.now();
+    if (_lastAddBySearchAt != null && now.difference(_lastAddBySearchAt!).inMilliseconds < 80) {
+      _focusSearchForNextScan();
+      return;
+    }
+    if (_isAddingBySearch) {
+      _focusSearchForNextScan();
+      return;
+    }
     _isAddingBySearch = true;
     _lastAddBySearchAt = now;
     try {
       await _selectFirstResultOnEnter();
     } finally {
       _isAddingBySearch = false;
+      _focusSearchForNextScan();
     }
   }
 
@@ -1061,11 +1086,18 @@ class _SalesScreenState extends State<SalesScreen> {
                       style: const TextStyle(color: Colors.white),
                       onTap: () {
                         if (!_showSearchResults) setState(() => _showSearchResults = true);
+                        if (_searchController.text.isNotEmpty) {
+                          _searchController.selection = TextSelection(
+                            baseOffset: 0,
+                            extentOffset: _searchController.text.length,
+                          );
+                        }
                       },
                       onChanged: (_) {
                         if (!_showSearchResults) setState(() => _showSearchResults = true);
                       },
                       onSubmitted: (_) => _addBySearch(),
+                      onEditingComplete: _focusSearchForNextScan,
                     ),
                   ),
                 ),
@@ -1257,7 +1289,6 @@ class _SalesScreenState extends State<SalesScreen> {
                           const Divider(height: 24),
                           _buildSummaryRow('Khách cần trả', '', _formatCompact.format(_amountDue), bold: true, color: const Color(0xFF1565C0)),
                           const SizedBox(height: 12),
-                          const SizedBox(height: 16),
                           Text('Phương thức', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
                           const SizedBox(height: 8),
                           Row(
@@ -1338,31 +1369,6 @@ class _SalesScreenState extends State<SalesScreen> {
                                 ),
                               ],
                             ),
-                            if (_activeBankQrProfile != null) ...[
-                              const SizedBox(height: 12),
-                              Text(
-                                'Mã QR thanh toán',
-                                style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 8),
-                              Center(
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Container(
-                                    width: 160,
-                                    height: 160,
-                                    color: Colors.grey[100],
-                                    child: _buildVietQrPreviewUrl(_activeBankQrProfile!) == null
-                                        ? Icon(Icons.qr_code_2, size: 56, color: Colors.grey[400])
-                                        : Image.network(
-                                            _buildVietQrPreviewUrl(_activeBankQrProfile!)!,
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (_, __, ___) => Icon(Icons.qr_code_2, size: 56, color: Colors.grey[400]),
-                                          ),
-                                  ),
-                                ),
-                              ),
-                            ],
                           ],
                         ],
                       ),
