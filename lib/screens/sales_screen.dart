@@ -132,6 +132,7 @@ class _SalesScreenState extends State<SalesScreen> {
   String? _lastAutoAddedCode;
   DateTime? _lastAutoAddedAt;
   String _lastProcessedSearchText = '';
+  bool _suppressNextExactAutoAdd = false;
   List<_BankQrProfile> _bankQrProfiles = [];
   String? _defaultBankQrId;
   String? _selectedBankQrId;
@@ -466,6 +467,15 @@ class _SalesScreenState extends State<SalesScreen> {
     // Khớp chính xác mã vạch/mã SP thì thêm ngay vào giỏ hàng.
     final exactMatch = _products.where((p) => p.code.toLowerCase() == queryLower).toList();
     if (exactMatch.length == 1 && textChanged) {
+      if (_suppressNextExactAutoAdd) {
+        _suppressNextExactAutoAdd = false;
+        setState(() {
+          _filteredProducts = List.from(_products);
+          _showSearchResults = false;
+          _searchFocusIndex = -1;
+        });
+        return;
+      }
       Future.microtask(() {
         if (!mounted) return;
         _upsertCartItem(exactMatch.first, qty: 1);
@@ -607,6 +617,7 @@ class _SalesScreenState extends State<SalesScreen> {
       if (!mounted) return;
       setState(() {
         _upsertCartItem(chosen, qty: 1);
+        _suppressNextExactAutoAdd = true;
         _searchController.text = chosen.code;
         _showSearchResults = false;
         _searchFocusIndex = -1;
@@ -647,6 +658,7 @@ class _SalesScreenState extends State<SalesScreen> {
       _upsertCartItem(created, qty: 1);
       _searchFocusIndex = -1;
       _showSearchResults = false;
+      _suppressNextExactAutoAdd = true;
       _searchController.text = created.code;
     });
     _focusSearchForNextScan();
@@ -1450,7 +1462,7 @@ class _SalesScreenState extends State<SalesScreen> {
         children: [
           SizedBox(width: _colIdx, child: Text('#', style: style)),
           SizedBox(width: _colGap + _colDel),
-          Expanded(flex: 2, child: Text('Mã SP', style: style, overflow: TextOverflow.ellipsis)),
+          SizedBox(width: _colQty, child: Text('Mã SP', style: style, overflow: TextOverflow.ellipsis)),
           Expanded(flex: 3, child: Text('Tên hàng', style: style, overflow: TextOverflow.ellipsis)),
           SizedBox(width: _colDvt, child: Text('ĐVT', style: style, overflow: TextOverflow.ellipsis)),
           SizedBox(width: _colQty, child: Center(child: Text('SL', style: style))),
@@ -1489,8 +1501,8 @@ class _SalesScreenState extends State<SalesScreen> {
               ),
             ),
             // Mã SP
-            Expanded(
-              flex: 2,
+            SizedBox(
+              width: _colQty,
               child: SelectableText(
                 item.productCode,
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
@@ -1502,7 +1514,7 @@ class _SalesScreenState extends State<SalesScreen> {
               flex: 3,
               child: SelectableText(
                 item.productName,
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                 maxLines: 2,
               ),
             ),
@@ -1548,7 +1560,7 @@ class _SalesScreenState extends State<SalesScreen> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
                   child: Text(_formatCompact.format(item.price),
-                      textAlign: TextAlign.right, style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w500)),
+                      textAlign: TextAlign.right, style: const TextStyle(fontSize: 14, color: Colors.blue, fontWeight: FontWeight.w600)),
                 ),
               ),
             ),
@@ -1556,7 +1568,7 @@ class _SalesScreenState extends State<SalesScreen> {
             SizedBox(
               width: _colTotal,
               child: Text(_formatCompact.format(item.total),
-                  textAlign: TextAlign.right, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  textAlign: TextAlign.right, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
             ),
             // Menu
             SizedBox(
