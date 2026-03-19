@@ -23,11 +23,10 @@ class PurchaseOrdersScreen extends StatefulWidget {
 class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
   final _formatNumber = NumberFormat('#,###', 'vi_VN');
   final _formatDate = DateFormat('dd/MM/yyyy HH:mm');
+  final _formatDay = DateFormat('dd/MM/yyyy');
   final Set<String> _selectedIds = <String>{};
-  final TextEditingController _orderCodeSearchController = TextEditingController();
-  final TextEditingController _itemSearchController = TextEditingController();
-  final TextEditingController _supplierSearchController = TextEditingController();
-  bool _showAdvancedSearch = false;
+  final TextEditingController _searchController = TextEditingController();
+  DateTimeRange? _selectedRange;
 
   List<PurchaseOrder> _orders = [];
   List<Product> _products = [];
@@ -48,9 +47,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
 
   @override
   void dispose() {
-    _orderCodeSearchController.dispose();
-    _itemSearchController.dispose();
-    _supplierSearchController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -804,22 +801,82 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
     return _normalizeSearchText(source).contains(_normalizeSearchText(query));
   }
 
+  DateTime _startOfDay(DateTime d) => DateTime(d.year, d.month, d.day);
+  DateTime _endOfDay(DateTime d) => DateTime(d.year, d.month, d.day, 23, 59, 59, 999);
+
+  String get _rangeLabel {
+    if (_selectedRange == null) return 'Tất cả thời gian';
+    return '${_formatDay.format(_selectedRange!.start)} - ${_formatDay.format(_selectedRange!.end)}';
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: _selectedRange ??
+          DateTimeRange(
+            start: _startOfDay(now),
+            end: _startOfDay(now),
+          ),
+      helpText: 'Chọn khoảng ngày',
+      saveText: 'Áp dụng',
+      cancelText: 'Hủy',
+      confirmText: 'Chọn',
+      locale: const Locale('vi', 'VN'),
+    );
+    if (picked == null) return;
+    setState(() => _selectedRange = picked);
+  }
+
+  void _setQuickRangeToday() {
+    final today = _startOfDay(DateTime.now());
+    setState(() => _selectedRange = DateTimeRange(start: today, end: today));
+  }
+
+  void _setQuickRangeLast7Days() {
+    final today = _startOfDay(DateTime.now());
+    final start = today.subtract(const Duration(days: 6));
+    setState(() => _selectedRange = DateTimeRange(start: start, end: today));
+  }
+
+  void _setQuickRangeThisMonth() {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, 1);
+    final end = _startOfDay(now);
+    setState(() => _selectedRange = DateTimeRange(start: start, end: end));
+  }
+
+  void _clearRangeFilter() {
+    setState(() => _selectedRange = null);
+  }
+
   List<PurchaseOrder> get _filteredOrders {
-    final orderCodeQuery = _orderCodeSearchController.text.trim();
-    final itemQuery = _itemSearchController.text.trim();
-    final supplierQuery = _supplierSearchController.text.trim();
+    final query = _searchController.text.trim();
     return _orders.where((order) {
-      final matchOrderCode = _containsNormalized(order.code, orderCodeQuery);
-      if (!matchOrderCode) return false;
+      if (_selectedRange != null) {
+        final start = _startOfDay(_selectedRange!.start);
+        final end = _endOfDay(_selectedRange!.end);
+        final inRange = !order.createdAt.isBefore(start) && !order.createdAt.isAfter(end);
+        if (!inRange) return false;
+      }
 
-      final matchItem = itemQuery.isEmpty ||
-          order.items.any((item) =>
-              _containsNormalized(item.productCode, itemQuery) ||
-              _containsNormalized(item.productName, itemQuery));
-      if (!matchItem) return false;
-
-      final supplierText = '${order.supplierCode} ${order.supplierName}';
-      return _containsNormalized(supplierText, supplierQuery);
+      if (query.isEmpty) return true;
+      final searchable = StringBuffer()
+        ..write(order.code)
+        ..write(' ')
+        ..write(order.supplierCode)
+        ..write(' ')
+        ..write(order.supplierName);
+      for (final item in order.items) {
+        searchable
+          ..write(' ')
+          ..write(item.productCode)
+          ..write(' ')
+          ..write(item.productName);
+      }
+      return _containsNormalized(searchable.toString(), query);
     }).toList();
   }
 
@@ -827,7 +884,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
     final visible = _filteredOrders;
     return visible.isNotEmpty && visible.every((o) => _selectedIds.contains(o.id));
   }
-  double get _totalAmountDue => _orders.fold(0.0, (sum, order) => sum + order.amountDue);
+  double get _totalAmountDue => _filteredOrders.fold(0.0, (sum, order) => sum + order.amountDue);
 
   List<PurchaseOrder> get _selectedOrders {
     if (_selectedIds.isEmpty) return _filteredOrders;
@@ -1022,58 +1079,72 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
               ),
               child: Column(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _orderCodeSearchController,
-                          onChanged: (_) => setState(() {}),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            hintText: 'Theo mã phiếu nhập',
-                            prefixIcon: const Icon(Icons.search, size: 20),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
+                  TextField(
+                    controller: _searchController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: 'Tìm theo mã phiếu, mã/tên hàng, mã/tên NCC',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _searchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Xóa tìm kiếm',
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {});
+                              },
+                              icon: const Icon(Icons.close, size: 18),
                             ),
-                          ),
-                        ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: 'Bộ lọc nâng cao',
-                        onPressed: () => setState(() => _showAdvancedSearch = !_showAdvancedSearch),
-                        icon: Icon(
-                          _showAdvancedSearch ? Icons.filter_alt_off : Icons.filter_alt_outlined,
-                        ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(Icons.today, size: 18),
+                        label: const Text('Hôm nay'),
+                        onPressed: _setQuickRangeToday,
                       ),
+                      ActionChip(
+                        avatar: const Icon(Icons.date_range, size: 18),
+                        label: const Text('7 ngày'),
+                        onPressed: _setQuickRangeLast7Days,
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.calendar_month, size: 18),
+                        label: const Text('Tháng này'),
+                        onPressed: _setQuickRangeThisMonth,
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.edit_calendar, size: 18),
+                        label: const Text('Chọn ngày'),
+                        onPressed: _pickDateRange,
+                      ),
+                      if (_selectedRange != null)
+                        ActionChip(
+                          avatar: const Icon(Icons.clear, size: 18),
+                          label: const Text('Bỏ lọc'),
+                          onPressed: _clearRangeFilter,
+                        ),
                     ],
                   ),
-                  if (_showAdvancedSearch) ...[
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _itemSearchController,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        hintText: 'Theo mã, tên hàng',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Khoảng chọn: $_rangeLabel',
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _supplierSearchController,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        hintText: 'Theo mã, tên NCC',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ),
