@@ -4,6 +4,7 @@ import 'services/storage_service.dart';
 import 'screens/products_screen.dart';
 import 'screens/sales_screen.dart';
 import 'screens/invoices_screen.dart';
+import 'screens/purchase_orders_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -97,7 +98,8 @@ class _MainScreenState extends State<MainScreen> {
     final screens = [
       ProductsScreen(isActive: _currentIndex == 0),
       SalesScreen(isActive: _currentIndex == 1),
-      InvoicesScreen(isActive: _currentIndex == 2),
+      PurchaseOrdersScreen(isActive: _currentIndex == 2),
+      InvoicesScreen(isActive: _currentIndex == 3),
     ];
     return Scaffold(
       body: IndexedStack(
@@ -117,6 +119,11 @@ class _MainScreenState extends State<MainScreen> {
             icon: Icon(Icons.point_of_sale_outlined),
             selectedIcon: Icon(Icons.point_of_sale),
             label: 'Bán hàng',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_outlined),
+            selectedIcon: Icon(Icons.inventory),
+            label: 'Nhập hàng',
           ),
           NavigationDestination(
             icon: Icon(Icons.receipt_long_outlined),

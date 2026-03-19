@@ -1040,6 +1040,10 @@ class _SalesScreenState extends State<SalesScreen> {
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.number,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            VndPriceInputFormatter(),
+          ],
           decoration: const InputDecoration(
             labelText: 'Đơn giá (VNĐ)',
             border: OutlineInputBorder(),
@@ -1132,14 +1136,14 @@ class _SalesScreenState extends State<SalesScreen> {
                                     onClose: () => _closeTab(i),
                                   ),
                                 )),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle, color: Colors.white),
+                          onPressed: _addNewTab,
+                          tooltip: 'Thêm hóa đơn mới',
+                        ),
                       ],
                     ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle, color: Colors.white),
-                  onPressed: _addNewTab,
-                  tooltip: 'Thêm hóa đơn mới',
                 ),
                 const SizedBox(width: 12),
                 Container(
@@ -1664,7 +1668,17 @@ class _ProductSearchTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     SelectableText(
-                      '${formatCompact.format(product.price)} • ${product.code}',
+                      formatCompact.format(product.price),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF0D47A1),
+                      ),
+                      maxLines: 1,
+                    ),
+                    const SizedBox(height: 1),
+                    SelectableText(
+                      product.code,
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       maxLines: 1,
                     ),

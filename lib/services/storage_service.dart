@@ -5,10 +5,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/product.dart';
 import '../models/invoice.dart';
+import '../models/purchase_order.dart';
 
 class StorageService {
   static const String _productsBox = 'products';
   static const String _invoicesBox = 'invoices';
+  static const String _purchaseOrdersKey = 'purchase_orders';
   static const String _bankQrProfilesKey = 'bank_qr_profiles';
   static const String _defaultBankQrIdKey = 'default_bank_qr_id';
 
@@ -154,6 +156,112 @@ class StorageService {
     final maps = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     maps.add(invoice.toMap());
     await box.put('list', maps);
+  }
+
+  // Purchase Orders
+  static List<PurchaseOrder> getPurchaseOrders() {
+    final box = _invoicesBoxRef;
+    final list = box.get(_purchaseOrdersKey, defaultValue: <Map>[]) as List;
+    return list
+        .map((e) => PurchaseOrder.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  static Future<void> savePurchaseOrder(PurchaseOrder order) async {
+    final box = _invoicesBoxRef;
+    final list = box.get(_purchaseOrdersKey, defaultValue: <Map>[]) as List;
+    final maps = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    maps.add(order.toMap());
+    await box.put(_purchaseOrdersKey, maps);
+  }
+
+  static Future<void> updatePurchaseOrder(PurchaseOrder order) async {
+    final box = _invoicesBoxRef;
+    final list = box.get(_purchaseOrdersKey, defaultValue: <Map>[]) as List;
+    final maps = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    final idx = maps.indexWhere((e) => (e['id'] ?? '').toString() == order.id);
+    if (idx >= 0) {
+      maps[idx] = order.toMap();
+    } else {
+      maps.add(order.toMap());
+    }
+    await box.put(_purchaseOrdersKey, maps);
+  }
+
+  static Future<void> deletePurchaseOrder(String orderId) async {
+    final box = _invoicesBoxRef;
+    final list = box.get(_purchaseOrdersKey, defaultValue: <Map>[]) as List;
+    final maps = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    maps.removeWhere((e) => (e['id'] ?? '').toString() == orderId);
+    await box.put(_purchaseOrdersKey, maps);
+  }
+
+  static Future<void> applyPurchaseOrderInventory(PurchaseOrder order) async {
+    if (order.items.isEmpty) return;
+    final products = getProducts();
+    final productById = <String, Product>{for (final p in products) p.id: p};
+    final productByCode = <String, Product>{
+      for (final p in products) _normalizeCode(p.code): p,
+    };
+
+    var changed = false;
+    for (final item in order.items) {
+      Product? product;
+      if (item.productId.trim().isNotEmpty) {
+        product = productById[item.productId];
+      }
+      product ??= productByCode[_normalizeCode(item.productCode)];
+      if (product == null) continue;
+
+      product.stock = (product.stock + item.quantity).clamp(0, 999999);
+      if (item.importPrice > 0) {
+        product.costPrice = item.importPrice;
+      }
+      changed = true;
+    }
+
+    if (changed) {
+      await saveProducts(products);
+    }
+  }
+
+  static Future<void> rollbackPurchaseOrderInventory(PurchaseOrder order) async {
+    if (order.items.isEmpty) return;
+    final products = getProducts();
+    final productById = <String, Product>{for (final p in products) p.id: p};
+    final productByCode = <String, Product>{
+      for (final p in products) _normalizeCode(p.code): p,
+    };
+
+    var changed = false;
+    for (final item in order.items) {
+      Product? product;
+      if (item.productId.trim().isNotEmpty) {
+        product = productById[item.productId];
+      }
+      product ??= productByCode[_normalizeCode(item.productCode)];
+      if (product == null) continue;
+
+      product.stock = (product.stock - item.quantity).clamp(0, 999999);
+      changed = true;
+    }
+
+    if (changed) {
+      await saveProducts(products);
+    }
+  }
+
+  static String nextPurchaseOrderCode() {
+    final orders = getPurchaseOrders();
+    final maxNo = orders.fold<int>(0, (currentMax, order) {
+      final match = RegExp(r'^PN(\d+)$').firstMatch(order.code);
+      if (match == null) return currentMax;
+      final parsed = int.tryParse(match.group(1) ?? '') ?? 0;
+      return parsed > currentMax ? parsed : currentMax;
+    });
+    final next = maxNo + 1;
+    return 'PN${next.toString().padLeft(6, '0')}';
   }
 
   static Future<void> updateProductStock(String productId, int quantitySold) async {

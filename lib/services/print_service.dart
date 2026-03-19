@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../models/purchase_order.dart';
 import '../models/sale_item.dart';
 import 'storage_service.dart';
 
@@ -70,6 +71,24 @@ class PrintService {
         paymentQrData: resolvedQr.$1,
         paymentQrLabel: resolvedQr.$2,
         paymentQrImageUrl: resolvedQr.$3,
+      ),
+    );
+  }
+
+  static Future<void> printPurchaseOrderA5({
+    required BuildContext context,
+    required PurchaseOrder order,
+    String branchName = 'Chi nhánh trung tâm',
+    String creatorName = 'Quản trị',
+    String supplierAddress = '',
+  }) async {
+    await Printing.layoutPdf(
+      name: 'Phieu_nhap_${order.code}',
+      onLayout: (_) async => _buildPurchaseOrderA5Pdf(
+        order: order,
+        branchName: branchName,
+        creatorName: creatorName,
+        supplierAddress: supplierAddress,
       ),
     );
   }
@@ -323,6 +342,135 @@ class PrintService {
     return Uint8List.fromList(await doc.save());
   }
 
+  static Future<Uint8List> _buildPurchaseOrderA5Pdf({
+    required PurchaseOrder order,
+    required String branchName,
+    required String creatorName,
+    required String supplierAddress,
+  }) async {
+    final doc = pw.Document();
+    final fontData = await rootBundle.load('assets/fonts/ArialUnicode.ttf');
+    final font = pw.Font.ttf(fontData);
+    final fontBold = font;
+
+    final qtyTotal = order.items.fold<int>(0, (sum, i) => sum + i.quantity);
+    final subTotal = order.items.fold<double>(0.0, (sum, i) => sum + i.unitPrice * i.quantity);
+    final totalDiscount = order.items.fold<double>(0.0, (sum, i) => sum + i.discountAmount * i.quantity);
+
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a5.landscape,
+        margin: const pw.EdgeInsets.fromLTRB(18, 14, 18, 14),
+        build: (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                _dateFmt.format(order.createdAt),
+                style: pw.TextStyle(font: font, fontSize: 8),
+              ),
+            ),
+            pw.SizedBox(height: 2),
+            pw.Center(
+              child: pw.Text(
+                'PHIẾU NHẬP HÀNG',
+                style: pw.TextStyle(font: fontBold, fontSize: 16),
+              ),
+            ),
+            pw.SizedBox(height: 4),
+            pw.Center(
+              child: pw.Text(
+                'Mã phiếu: ${order.code}',
+                style: pw.TextStyle(font: fontBold, fontSize: 10),
+              ),
+            ),
+            pw.Center(
+              child: pw.Text(
+                'Ngày: ${_dateFmt.format(order.createdAt)}',
+                style: pw.TextStyle(font: font, fontSize: 9),
+              ),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Text('Chi nhánh nhập: $branchName', style: pw.TextStyle(font: font, fontSize: 10)),
+            pw.Text('Người tạo: $creatorName', style: pw.TextStyle(font: font, fontSize: 10)),
+            pw.Text('Nhà cung cấp: ${order.supplierName}', style: pw.TextStyle(font: font, fontSize: 10)),
+            pw.Text('Địa chỉ: ${supplierAddress.trim().isEmpty ? '-' : supplierAddress}', style: pw.TextStyle(font: font, fontSize: 10)),
+            pw.SizedBox(height: 8),
+            pw.TableHelper.fromTextArray(
+              headers: const ['STT', 'Mã hàng', 'Tên hàng', 'Đơn giá', 'Số lượng', 'Chiết khấu', 'Thành tiền'],
+              data: order.items.asMap().entries.map((entry) {
+                final idx = entry.key + 1;
+                final item = entry.value;
+                return [
+                  '$idx',
+                  item.productCode,
+                  item.productName,
+                  _fmt.format(item.unitPrice),
+                  '${item.quantity}',
+                  _fmt.format(item.discountAmount),
+                  _fmt.format(item.lineTotal),
+                ];
+              }).toList(),
+              headerStyle: pw.TextStyle(font: fontBold, fontSize: 9),
+              cellStyle: pw.TextStyle(font: font, fontSize: 9),
+              headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+              border: pw.TableBorder.all(width: 0.6, color: PdfColors.black),
+              columnWidths: {
+                0: const pw.FixedColumnWidth(26),
+                1: const pw.FixedColumnWidth(86),
+                2: const pw.FlexColumnWidth(2.6),
+                3: const pw.FixedColumnWidth(58),
+                4: const pw.FixedColumnWidth(46),
+                5: const pw.FixedColumnWidth(58),
+                6: const pw.FixedColumnWidth(70),
+              },
+              cellAlignments: {
+                0: pw.Alignment.center,
+                3: pw.Alignment.centerRight,
+                4: pw.Alignment.center,
+                5: pw.Alignment.centerRight,
+                6: pw.Alignment.centerRight,
+              },
+            ),
+            pw.SizedBox(height: 8),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.SizedBox(
+                width: 240,
+                child: pw.Column(
+                  children: [
+                    _purchaseSummaryRow('Tổng số lượng hàng:', '$qtyTotal', font, fontBold),
+                    _purchaseSummaryRow('Tổng tiền hàng:', _fmt.format(subTotal), font, fontBold),
+                    _purchaseSummaryRow('Chiết khấu hóa đơn:', _fmt.format(totalDiscount), font, fontBold),
+                    _purchaseSummaryRow('Tiền cần trả NCC:', _fmt.format(order.amountDue), fontBold, fontBold),
+                  ],
+                ),
+              ),
+            ),
+            pw.Spacer(),
+            pw.Row(
+              children: [
+                pw.Expanded(
+                  child: pw.Center(
+                    child: pw.Text('Nhà cung cấp', style: pw.TextStyle(font: fontBold, fontSize: 11)),
+                  ),
+                ),
+                pw.Expanded(
+                  child: pw.Center(
+                    child: pw.Text('Người lập', style: pw.TextStyle(font: fontBold, fontSize: 11)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Uint8List.fromList(await doc.save());
+  }
+
   static pw.Widget _summaryRow(
     String label,
     String value, {
@@ -344,6 +492,37 @@ class PrintService {
             child: pw.Text(
               value,
               style: pw.TextStyle(font: fontBold, fontSize: size),
+              textAlign: pw.TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _purchaseSummaryRow(
+    String label,
+    String value,
+    pw.Font labelFont,
+    pw.Font valueFont,
+  ) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 1.5),
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Text(
+              label,
+              style: pw.TextStyle(font: labelFont, fontSize: 10),
+              textAlign: pw.TextAlign.right,
+            ),
+          ),
+          pw.SizedBox(width: 8),
+          pw.SizedBox(
+            width: 66,
+            child: pw.Text(
+              value,
+              style: pw.TextStyle(font: valueFont, fontSize: 10),
               textAlign: pw.TextAlign.right,
             ),
           ),
