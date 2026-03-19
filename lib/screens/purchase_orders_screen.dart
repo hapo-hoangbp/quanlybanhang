@@ -24,6 +24,10 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
   final _formatNumber = NumberFormat('#,###', 'vi_VN');
   final _formatDate = DateFormat('dd/MM/yyyy HH:mm');
   final Set<String> _selectedIds = <String>{};
+  final TextEditingController _orderCodeSearchController = TextEditingController();
+  final TextEditingController _itemSearchController = TextEditingController();
+  final TextEditingController _supplierSearchController = TextEditingController();
+  bool _showAdvancedSearch = false;
 
   List<PurchaseOrder> _orders = [];
   List<Product> _products = [];
@@ -40,6 +44,14 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
     if (widget.isActive && !oldWidget.isActive) {
       _loadOrders();
     }
+  }
+
+  @override
+  void dispose() {
+    _orderCodeSearchController.dispose();
+    _itemSearchController.dispose();
+    _supplierSearchController.dispose();
+    super.dispose();
   }
 
   void _loadOrders() {
@@ -710,11 +722,115 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
     }
   }
 
-  bool get _allSelected => _orders.isNotEmpty && _selectedIds.length == _orders.length;
+  String _normalizeSearchText(String input) {
+    var s = input.trim().toLowerCase();
+    const replacements = <String, String>{
+      'à': 'a',
+      'á': 'a',
+      'ạ': 'a',
+      'ả': 'a',
+      'ã': 'a',
+      'â': 'a',
+      'ầ': 'a',
+      'ấ': 'a',
+      'ậ': 'a',
+      'ẩ': 'a',
+      'ẫ': 'a',
+      'ă': 'a',
+      'ằ': 'a',
+      'ắ': 'a',
+      'ặ': 'a',
+      'ẳ': 'a',
+      'ẵ': 'a',
+      'đ': 'd',
+      'è': 'e',
+      'é': 'e',
+      'ẹ': 'e',
+      'ẻ': 'e',
+      'ẽ': 'e',
+      'ê': 'e',
+      'ề': 'e',
+      'ế': 'e',
+      'ệ': 'e',
+      'ể': 'e',
+      'ễ': 'e',
+      'ì': 'i',
+      'í': 'i',
+      'ị': 'i',
+      'ỉ': 'i',
+      'ĩ': 'i',
+      'ò': 'o',
+      'ó': 'o',
+      'ọ': 'o',
+      'ỏ': 'o',
+      'õ': 'o',
+      'ô': 'o',
+      'ồ': 'o',
+      'ố': 'o',
+      'ộ': 'o',
+      'ổ': 'o',
+      'ỗ': 'o',
+      'ơ': 'o',
+      'ờ': 'o',
+      'ớ': 'o',
+      'ợ': 'o',
+      'ở': 'o',
+      'ỡ': 'o',
+      'ù': 'u',
+      'ú': 'u',
+      'ụ': 'u',
+      'ủ': 'u',
+      'ũ': 'u',
+      'ư': 'u',
+      'ừ': 'u',
+      'ứ': 'u',
+      'ự': 'u',
+      'ử': 'u',
+      'ữ': 'u',
+      'ỳ': 'y',
+      'ý': 'y',
+      'ỵ': 'y',
+      'ỷ': 'y',
+      'ỹ': 'y',
+    };
+    replacements.forEach((k, v) {
+      s = s.replaceAll(k, v);
+    });
+    return s;
+  }
+
+  bool _containsNormalized(String source, String query) {
+    if (query.trim().isEmpty) return true;
+    return _normalizeSearchText(source).contains(_normalizeSearchText(query));
+  }
+
+  List<PurchaseOrder> get _filteredOrders {
+    final orderCodeQuery = _orderCodeSearchController.text.trim();
+    final itemQuery = _itemSearchController.text.trim();
+    final supplierQuery = _supplierSearchController.text.trim();
+    return _orders.where((order) {
+      final matchOrderCode = _containsNormalized(order.code, orderCodeQuery);
+      if (!matchOrderCode) return false;
+
+      final matchItem = itemQuery.isEmpty ||
+          order.items.any((item) =>
+              _containsNormalized(item.productCode, itemQuery) ||
+              _containsNormalized(item.productName, itemQuery));
+      if (!matchItem) return false;
+
+      final supplierText = '${order.supplierCode} ${order.supplierName}';
+      return _containsNormalized(supplierText, supplierQuery);
+    }).toList();
+  }
+
+  bool get _allSelected {
+    final visible = _filteredOrders;
+    return visible.isNotEmpty && visible.every((o) => _selectedIds.contains(o.id));
+  }
   double get _totalAmountDue => _orders.fold(0.0, (sum, order) => sum + order.amountDue);
 
   List<PurchaseOrder> get _selectedOrders {
-    if (_selectedIds.isEmpty) return _orders;
+    if (_selectedIds.isEmpty) return _filteredOrders;
     return _orders.where((o) => _selectedIds.contains(o.id)).toList();
   }
 
@@ -845,6 +961,10 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
               children: [
                 OutlinedButton.icon(
                   onPressed: _exportOrders,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white),
+                  ),
                   icon: const Icon(Icons.upload_file),
                   label: const Text('Export'),
                 ),
@@ -893,6 +1013,71 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
               ),
             ),
             const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: Colors.grey[300]!),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _orderCodeSearchController,
+                          onChanged: (_) => setState(() {}),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: 'Theo mã phiếu nhập',
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Bộ lọc nâng cao',
+                        onPressed: () => setState(() => _showAdvancedSearch = !_showAdvancedSearch),
+                        icon: Icon(
+                          _showAdvancedSearch ? Icons.filter_alt_off : Icons.filter_alt_outlined,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_showAdvancedSearch) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _itemSearchController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'Theo mã, tên hàng',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _supplierSearchController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'Theo mã, tên NCC',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
             Expanded(
               child: _orders.isEmpty
                   ? Center(
@@ -901,6 +1086,13 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
                         style: TextStyle(color: Colors.grey[600], fontSize: 16),
                       ),
                     )
+                  : _filteredOrders.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Không tìm thấy phiếu nhập phù hợp',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                          ),
+                        )
                   : Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
@@ -920,13 +1112,14 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
                                     Checkbox(
                                       value: _allSelected,
                                       onChanged: (value) {
+                                        final visible = _filteredOrders;
                                         setState(() {
                                           if (value == true) {
                                             _selectedIds
                                               ..clear()
-                                              ..addAll(_orders.map((o) => o.id));
+                                              ..addAll(visible.map((o) => o.id));
                                           } else {
-                                            _selectedIds.clear();
+                                            _selectedIds.removeWhere((id) => visible.any((o) => o.id == id));
                                           }
                                         });
                                       },
@@ -949,7 +1142,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
                               const DataColumn(label: Text('Trạng thái')),
                               const DataColumn(label: Text('Thao tác')),
                             ],
-                            rows: _orders.map((order) {
+                            rows: _filteredOrders.map((order) {
                               final selected = _selectedIds.contains(order.id);
                               return DataRow(
                                 selected: selected,
