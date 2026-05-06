@@ -1802,6 +1802,13 @@ class _QtyInputState extends State<_QtyInput> {
         baseOffset: 0,
         extentOffset: _controller.text.length,
       ),
+      onChanged: (value) {
+        final parsed = int.tryParse(value.trim());
+        if (parsed != null) {
+          final clamped = parsed.clamp(0, 999999);
+          widget.onSubmitted(clamped);
+        }
+      },
       onSubmitted: _applyValue,
       onTapOutside: (_) {
         _applyValue(_controller.text);
