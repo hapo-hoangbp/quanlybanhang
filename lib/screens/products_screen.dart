@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../models/product.dart';
 import '../services/storage_service.dart';
 import '../services/excel_import_service.dart';
+import '../services/excel_export_service.dart';
 import 'product_form_screen.dart';
 
 class ProductsScreen extends StatefulWidget {
@@ -120,6 +121,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.upload_file),
+            tooltip: 'Export Excel',
+            onPressed: () async {
+              final error = await ExcelExportService.exportProducts(_products);
+              if (error != null && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(error), backgroundColor: Colors.red),
+                );
+              }
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.download),
             tooltip: 'Import Excel',
             onPressed: () async {
               _importFromExcel();
