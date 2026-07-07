@@ -213,39 +213,13 @@ class _SalesScreenState extends State<SalesScreen> {
           curve: Curves.easeOut,
         );
       }
+      _focusSearchForNextScan();
     });
   }
 
-  Future<void> _closeTab(int index) async {
+  void _closeTab(int index) {
     final tab = _tabs[index];
-    final hasItems = tab.cart.isNotEmpty;
     final isSingleTab = _tabs.length <= 1;
-    final closed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text(isSingleTab ? 'Xóa giỏ hàng' : 'Đóng hóa đơn'),
-        content: Text(
-          hasItems
-              ? (isSingleTab
-                  ? 'Giỏ hàng hiện có ${tab.cart.length} mặt hàng. Bạn có chắc muốn xóa toàn bộ?'
-                  : 'Hóa đơn ${index + 1} còn ${tab.cart.length} mặt hàng chưa thanh toán. Đóng hóa đơn sẽ xóa toàn bộ. Bạn có chắc?')
-              : (isSingleTab ? 'Giỏ hàng đang trống. Bạn có muốn làm mới hóa đơn này?' : 'Bạn có chắc muốn đóng Hóa đơn ${index + 1}?'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: Text(isSingleTab ? 'Xóa hết' : 'Đóng'),
-          ),
-        ],
-      ),
-    );
-    if (closed != true || !mounted) return;
     setState(() {
       if (isSingleTab) {
         tab.cart.clear();
@@ -1854,10 +1828,10 @@ class _InvoiceTabChip extends StatelessWidget {
               if (onClose != null) ...[
                 const SizedBox(width: 4),
                 GestureDetector(
-                  onTap: onClose,
+                  onDoubleTap: onClose,
                   child: Icon(
                     Icons.close,
-                    size: 16,
+                    size: 18,
                     color: isActive ? Colors.grey[700] : Colors.white70,
                   ),
                 ),
